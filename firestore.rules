@@ -1,0 +1,10 @@
+rules_version = '2';
+// The server uses the Admin SDK (which bypasses these rules). These rules exist to deny ALL direct client
+// access: no browser or device ever talks to Firestore directly in this app. The audit_log is additionally
+// locked to create-only here as defence in depth; server code must still only ever append to it.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /audit_log/{doc} { allow create: if false; allow read, update, delete: if false; }
+    match /{document=**} { allow read, write: if false; }
+  }
+}

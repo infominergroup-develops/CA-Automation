@@ -1,0 +1,30 @@
+# Production on one server (e.g. a DigitalOcean droplet). See "Deploy to DigitalOcean" in README.md.
+# Reads .env next to this file: secrets for the app, and DOMAIN for Caddy.
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:  # override anything a copied dev .env says
+      NODE_ENV: production
+      DATA_DIR: /data
+      API_PORT: "3001"
+    volumes:
+      - ./data:/data  # database + encrypted files; back this folder up
+    # no ports: only Caddy can reach the app
+
+  caddy:
+    image: caddy:2.10
+    restart: unless-stopped
+    ports: ["80:80", "443:443", "443:443/udp"]
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data  # HTTPS certificates
+      - caddy-config:/config
+    depends_on: [app]
+
+volumes:
+  caddy-data:
+  caddy-config:

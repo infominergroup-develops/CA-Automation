@@ -94,6 +94,42 @@ SQLite is enough for one firm (hundreds of clients, tens of staff) on one server
 
 Check timelines (response days, breach reporting) against the DPDP Rules in force and set `dpdp_response_days` accordingly.
 
+## Deploy to DigitalOcean
+
+One droplet runs the app in Docker with Caddy in front for automatic HTTPS. The database and encrypted files live in `/opt/portal/data` on the droplet.
+
+1. **Create the droplet.** Marketplace image *Docker on Ubuntu*, region **Bangalore (BLR1)** (keeps data in India), Basic 2 GB RAM or more, SSH key login, and tick **Backups → Daily**.
+2. **Point your domain.** Add an `A` record, e.g. `portal.infominers.in` → the droplet's IP. Wait until it resolves.
+3. **Open only SSH and web ports** on the droplet:
+   ```bash
+   ufw allow OpenSSH && ufw allow 80 && ufw allow 443 && ufw --force enable
+   ```
+4. **Copy the project, with your data and keys,** from your Mac (stop `npm run dev` first so the database is not mid-write):
+   ```bash
+   rsync -av --exclude node_modules --exclude dist --exclude data-demo-backup --exclude .git ./ root@DROPLET_IP:/opt/portal/
+   ```
+5. **Set production values** in `/opt/portal/.env` on the droplet:
+   ```
+   DOMAIN=portal.infominers.in
+   APP_ORIGIN=https://portal.infominers.in
+   OTP_PROVIDER=off
+   ```
+   Keep `MASTER_KEY` and `OTP_SECRET` exactly as they are; documents encrypted with one key cannot be read with another. `NODE_ENV`, `DATA_DIR` and `API_PORT` are set by `docker-compose.yml`.
+6. **Start it:**
+   ```bash
+   cd /opt/portal && chown -R 1000:1000 data && chmod 600 .env && docker compose up -d --build
+   docker compose logs -f app   # expect "Infominer portal API on ... (production)"
+   ```
+7. Open `https://portal.infominers.in`, sign in as the Director, then delete `/opt/portal/data/initial-credentials.txt` once everyone has their password.
+
+**Updating later:** copy the code without touching the server's data or keys, then rebuild.
+```bash
+rsync -av --exclude node_modules --exclude dist --exclude data --exclude data-demo-backup --exclude .env --exclude .git ./ root@DROPLET_IP:/opt/portal/
+ssh root@DROPLET_IP "cd /opt/portal && docker compose up -d --build"
+```
+
+**Backups:** droplet backups cover the whole disk. Also keep an offline copy of `MASTER_KEY`; without it, a backup's documents cannot be decrypted.
+
 ## Before go-live checklist
 
 - [ ] Host in an India region (e.g. AWS Mumbai) on an encrypted disk; run behind nginx/ALB with HTTPS; set `NODE_ENV=production` and `APP_ORIGIN=https://…`.

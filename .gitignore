@@ -1,0 +1,12 @@
+node_modules
+dist
+data/
+data-demo-backup/
+.env
+.env.*
+!.env.example
+.DS_Store
+.test-data/
+data-demo-backup/
+test-results/
+playwright-report/

@@ -1,0 +1,13 @@
+node_modules
+dist
+agent/dist
+data
+data-demo-backup
+.test-data
+test-results
+playwright-report
+.env
+.env.*
+.git
+*.log
+.DS_Store

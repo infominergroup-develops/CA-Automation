@@ -1,0 +1,87 @@
+@import "@fontsource/ibm-plex-sans/400.css";
+@import "@fontsource/ibm-plex-sans/500.css";
+@import "@fontsource/ibm-plex-sans/600.css";
+@import "@fontsource/ibm-plex-sans/700.css";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "tailwindcss";
+
+/*
+ * Design tokens. Brand values come from development/color.md.
+ * Contrast (WCAG AA, checked by the Playwright + axe sweep in tests/ui.spec.ts):
+ *   brand-500 #eb8a23 with ink-900 text = 5.7:1  → primary buttons use dark text, never white
+ *   brand-700 #a85a0e on white          = 5.1:1  → orange text and links
+ *   slate-400 / slate-500 are darkened below so secondary text passes on both white and the canvas.
+ */
+@theme {
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --color-brand-50: #fef6ec;
+  --color-brand-100: #fde8cc;
+  --color-brand-200: #f9cf98;
+  --color-brand-300: #f4b261;
+  --color-brand-500: #eb8a23;
+  --color-brand-600: #d97917;
+  --color-brand-700: #a85a0e;
+  --color-brand-800: #7c430c;
+  --color-gold: #e8a020;
+
+  --color-ink: #2d3e50;
+  --color-ink-900: #1e293b;
+  --color-canvas: #f4f5f7;
+  --color-line: #e6e8ec;
+
+  /* Accessible greys: 5.2:1 and 6.6:1 on white, still ≥ 4.7:1 on the canvas. */
+  --color-slate-400: #5f6e82;
+  --color-slate-500: #4f5d70;
+
+  /* Soft, diffused ambient shadows; never a hard dark drop. */
+  --shadow-card: 0 1px 1px rgb(16 24 40 / 0.03), 0 6px 20px -8px rgb(16 24 40 / 0.08);
+  --shadow-lift: 0 2px 4px rgb(16 24 40 / 0.04), 0 18px 40px -16px rgb(16 24 40 / 0.18);
+  --shadow-pop: 0 24px 60px -20px rgb(16 24 40 / 0.28), 0 6px 16px -8px rgb(16 24 40 / 0.10);
+  --shadow-inner-hi: inset 0 1px 0 rgb(255 255 255 / 0.7);
+
+  --ease-fluid: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+
+  --animate-fade-in: fade-in 220ms var(--ease-out-expo);
+  --animate-pop-in: pop-in 420ms var(--ease-out-expo);
+  --animate-slide-in: slide-in 420ms var(--ease-fluid);
+  @keyframes fade-in { from { opacity: 0 } to { opacity: 1 } }
+  @keyframes pop-in { from { opacity: 0; transform: translateY(10px) scale(0.98) } to { opacity: 1; transform: none } }
+  @keyframes slide-in { from { transform: translateX(-104%) } to { transform: none } }
+}
+
+@layer base {
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    @apply bg-canvas text-ink-900 font-sans antialiased;
+    font-feature-settings: "tnum" 1; /* tabular figures: amounts and dates line up */
+  }
+  /* A faint brand glow behind everything: depth without noise. Fixed, so it never repaints on scroll. */
+  body::before {
+    content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+    background:
+      radial-gradient(60rem 40rem at 100% -10%, rgb(235 138 35 / 0.07), transparent 60%),
+      radial-gradient(50rem 36rem at -10% 110%, rgb(45 62 80 / 0.06), transparent 60%);
+  }
+  h1, h2, h3 { @apply text-ink; text-wrap: balance; letter-spacing: -0.015em; }
+  p { text-wrap: pretty; }
+  button, [role="button"], a, label[for], select, summary { cursor: pointer; }
+  button:disabled { cursor: not-allowed; }
+  :focus-visible { outline: 2px solid var(--color-brand-500); outline-offset: 2px; border-radius: 10px; }
+  ::selection { background: var(--color-brand-100); }
+  /* Finer icon strokes read as precise rather than heavy. */
+  svg.lucide { stroke-width: 1.6; }
+}
+
+@layer components {
+  /* "Double bezel": an outer tray holding an inner panel, with concentric radii. */
+  .bezel { @apply rounded-[22px] bg-white/55 p-1 ring-1 ring-ink/[0.06] shadow-card; }
+  .bezel-core { @apply rounded-[18px] bg-white ring-1 ring-ink/[0.05]; box-shadow: var(--shadow-inner-hi); }
+  .eyebrow { @apply inline-flex items-center gap-1.5 rounded-full bg-brand-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-brand-800 ring-1 ring-brand-200/70; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 1ms !important; animation-iteration-count: 1 !important; transition-duration: 1ms !important; }
+}
