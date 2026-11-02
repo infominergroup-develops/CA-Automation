@@ -17,11 +17,9 @@ export async function hasCurrentConsent(userId: string): Promise<boolean> {
 }
 
 export async function activeConsent(userId: string): Promise<ConsentDoc | undefined> {
-  const rows = await query<ConsentDoc>(C.consents, {
-    where: [['user_id', '==', userId], ['withdrawn_at', '==', null]],
-    orderBy: [['given_at', 'desc']], limit: 1,
-  });
-  return rows[0];
+  // Equality filters only (sorted here), so no composite index is needed.
+  const rows = await query<ConsentDoc>(C.consents, { where: [['user_id', '==', userId], ['withdrawn_at', '==', null]] });
+  return rows.sort((a, b) => b.given_at.localeCompare(a.given_at))[0];
 }
 
 /** Records consent, superseding any earlier active consent for this user. */
@@ -33,7 +31,8 @@ export async function giveConsent(userId: string, purposes: string[], version: s
 }
 
 export function listConsents(userId: string): Promise<ConsentDoc[]> {
-  return query<ConsentDoc>(C.consents, { where: [['user_id', '==', userId]], orderBy: [['given_at', 'desc']] });
+  return query<ConsentDoc>(C.consents, { where: [['user_id', '==', userId]] })
+    .then((rows) => rows.sort((a, b) => b.given_at.localeCompare(a.given_at)));
 }
 
 /**

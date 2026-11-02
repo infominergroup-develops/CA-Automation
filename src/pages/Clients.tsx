@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { Building2, ChevronRight, ClipboardList, Plus, Search, Send, UserPlus, Users } from 'lucide-react';
 import { api, fmtDate } from '../api';
-import { useUser } from '../auth';
+import { useHasTally, useUser } from '../auth';
 import { DocumentsPanel } from '../components/DocumentsPanel';
 import { ReportsPanel } from './Reports';
 import {
@@ -153,6 +153,7 @@ function StaffCompany() {
     : api<Company[]>('/companies').then((cs) => ({ company: cs.find((c) => c.id === id)!, contacts: [] })), [id]);
   const [tasks, , reloadTasks] = useLoad(() => api<TaskRow[]>(`/tasks?company_id=${id}`), [id]);
   const [params, setParams] = useSearchParams();
+  const hasTally = useHasTally();
   const tab = (params.get('tab') ?? 'docs') as 'docs' | 'reports' | 'tasks' | 'contacts';
   const setTab = (t: typeof tab) => setParams(t === 'docs' ? {} : { tab: t }, { replace: true });
   const [newTask, setNewTask] = useState(false);
@@ -175,12 +176,12 @@ function StaffCompany() {
         actions={managerial && <Button icon={Plus} onClick={() => setNewTask(true)}>New task</Button>} />
       <Tabs value={tab} onChange={setTab} items={[
         { value: 'docs', label: 'Documents' },
-        { value: 'reports', label: 'Reports' },
+        ...(hasTally ? [{ value: 'reports' as const, label: 'Reports' }] : []),
         { value: 'tasks', label: 'Tasks', count: tasks?.length },
         ...(managerial ? [{ value: 'contacts' as const, label: 'Client logins', count: data.contacts.length }] : []),
       ]} />
       {tab === 'docs' && <DocumentsPanel companyId={c.id} />}
-      {tab === 'reports' && <ReportsPanel companyId={c.id} />}
+      {hasTally && tab === 'reports' && <ReportsPanel companyId={c.id} />}
       {tab === 'tasks' && <Card padded={false}>{tasks && <TaskTable rows={tasks} />}</Card>}
       {tab === 'contacts' && (
         <Card title="People who can sign in for this client" padded={false} actions={<Button variant="secondary" icon={UserPlus} onClick={() => setAddContact(true)}>Add login</Button>}>
@@ -227,15 +228,16 @@ function ClientCompany() {
   const [tasks, , reload] = useLoad(() => api<ClientTask[]>('/tasks'), [id]);
   const [asking, setAsking] = useState(false);
   const [params, setParams] = useSearchParams();
-  const tab = (params.get('tab') ?? 'reports') as 'reports' | 'docs' | 'work';
+  const hasTally = useHasTally();
+  const tab = (params.get('tab') ?? (hasTally ? 'reports' : 'docs')) as 'reports' | 'docs' | 'work';
   const setTab = (t: typeof tab) => setParams({ tab: t }, { replace: true });
   const c = companies?.find((x) => x.id === id);
   return (
     <>
       <PageHeader back={{ to: '/', label: 'Home' }} title={c?.legal_name ?? 'Company'} subtitle={c?.gstin && <span className="font-mono">GSTIN {c.gstin}</span>}
         actions={<Button variant="dark" icon={Send} onClick={() => setAsking(true)}>Raise a request</Button>} />
-      <Tabs value={tab} onChange={setTab} items={[{ value: 'reports', label: 'Reports' }, { value: 'docs', label: 'Documents' }, { value: 'work', label: 'Work status' }]} />
-      {id && tab === 'reports' && <ReportsPanel companyId={id} />}
+      <Tabs value={tab} onChange={setTab} items={[...(hasTally ? [{ value: 'reports' as const, label: 'Reports' }] : []), { value: 'docs', label: 'Documents' }, { value: 'work', label: 'Work status' }]} />
+      {id && hasTally && tab === 'reports' && <ReportsPanel companyId={id} />}
       {id && tab === 'docs' && <DocumentsPanel companyId={id} />}
       {tab === 'work' && <div className="max-w-2xl"><ClientTasks tasks={tasks?.filter((t) => t.company === c?.legal_name)} /></div>}
       {asking && id && <RaiseRequest companyId={id} onClose={() => setAsking(false)} onDone={() => { setAsking(false); reload(); }} />}

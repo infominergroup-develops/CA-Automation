@@ -94,41 +94,55 @@ SQLite is enough for one firm (hundreds of clients, tens of staff) on one server
 
 Check timelines (response days, breach reporting) against the DPDP Rules in force and set `dpdp_response_days` accordingly.
 
-## Deploy to DigitalOcean
+## Deploy to DigitalOcean App Platform (data on Google Cloud)
 
-One droplet runs the app in Docker with Caddy in front for automatic HTTPS. The database and encrypted files live in `/opt/portal/data` on the droplet.
+The app runs on DigitalOcean; all data stays in Google Cloud (Firestore for records and sign-in, the Cloud Storage bucket for encrypted documents, Secret Manager for `MASTER_KEY` / `OTP_SECRET`). App Platform builds the `Dockerfile` from GitHub, which starts the Firestore server. Nothing is kept on DigitalOcean's disk, so redeploys lose nothing.
 
-1. **Create the droplet.** Marketplace image *Docker on Ubuntu*, region **Bangalore (BLR1)** (keeps data in India), Basic 2 GB RAM or more, SSH key login, and tick **Backups → Daily**.
-2. **Point your domain.** Add an `A` record, e.g. `portal.infominers.in` → the droplet's IP. Wait until it resolves.
-3. **Open only SSH and web ports** on the droplet:
+1. **Create a key for the `portal-run` service account** (it can only use Firestore, the documents bucket and the secret). On your Mac:
    ```bash
-   ufw allow OpenSSH && ufw allow 80 && ufw allow 443 && ufw --force enable
+   gcloud iam service-accounts keys create ~/portal-run-key.json --iam-account=portal-run@infominer-dev-fdbfa.iam.gserviceaccount.com --project=infominer-dev-fdbfa
    ```
-4. **Copy the project, with your data and keys,** from your Mac (stop `npm run dev` first so the database is not mid-write):
    ```bash
-   rsync -av --exclude node_modules --exclude dist --exclude data-demo-backup --exclude .git ./ root@DROPLET_IP:/opt/portal/
+   base64 -i ~/portal-run-key.json | pbcopy
    ```
-5. **Set production values** in `/opt/portal/.env` on the droplet:
-   ```
-   DOMAIN=portal.infominers.in
-   APP_ORIGIN=https://portal.infominers.in
-   OTP_PROVIDER=off
-   ```
-   Keep `MASTER_KEY` and `OTP_SECRET` exactly as they are; documents encrypted with one key cannot be read with another. `NODE_ENV`, `DATA_DIR` and `API_PORT` are set by `docker-compose.yml`.
-6. **Start it:**
-   ```bash
-   cd /opt/portal && chown -R 1000:1000 data && chmod 600 .env && docker compose up -d --build
-   docker compose logs -f app   # expect "Infominer portal API on ... (production)"
-   ```
-7. Open `https://portal.infominers.in`, sign in as the Director, then delete `/opt/portal/data/initial-credentials.txt` once everyone has their password.
+   The key is now on your clipboard. Delete the file once it is saved in DigitalOcean (step 2): `rm ~/portal-run-key.json`.
+2. **App Platform → your app → Settings → App-level environment variables.** Set these, ticking **Encrypt** on the key:
 
-**Updating later:** copy the code without touching the server's data or keys, then rebuild.
+   | Variable | Value |
+   | --- | --- |
+   | `GOOGLE_CREDENTIALS_BASE64` | paste from the clipboard (Encrypt) |
+   | `GOOGLE_CLOUD_PROJECT` | `infominer-dev-fdbfa` |
+   | `DOCS_BUCKET` | `infominer-dev-fdbfa-documents` |
+   | `INFOMINER_SECRETS_ID` | `projects/infominer-dev-fdbfa/secrets/infominer-secrets` |
+   | `APP_ORIGIN` | `https://<your-app>.ondigitalocean.app` (exactly as the browser shows it) |
+   | `NODE_ENV` | `production` |
+   | `OTP_PROVIDER` | `off` |
+
+   Delete any `MASTER_KEY`, `OTP_SECRET`, `DATA_DIR`, `API_PORT` and `FIRESTORE_EMULATOR_HOST` you added earlier: the keys come from Secret Manager, and a `MASTER_KEY` set here would override it.
+3. **Settings → the web component:** build from the `Dockerfile`, HTTP port `8080`, health check path `/healthz`. Pick the **Bangalore (BLR)** region, nearest to Firestore in Mumbai.
+4. Push to GitHub (`main`); App Platform rebuilds. The runtime log should show `Loaded 2 secret value(s) from Secret Manager` and `Infominer portal (Firestore) on ... (production)`.
+
+To rotate the key: create a new one (step 1), update the variable, then delete the old key in Google Cloud → IAM → Service accounts → `portal-run` → Keys.
+
+## Deploy to Google Cloud (Cloud Run + Firestore)
+
+Production runs the Firestore server (`server/index-fs.ts`) on Cloud Run in Mumbai. Data lives in Firestore, encrypted document files in the Cloud Storage bucket, and `MASTER_KEY` / `OTP_SECRET` in Secret Manager (`infominer-secrets`), so the server keeps nothing on its own disk. Tally sync and reports are not on Firestore yet; the app hides them there.
+
+One-time setup (already done for `infominer-dev-fdbfa`): `scripts/firebase-setup.sh`.
+
+Deploy or update:
 ```bash
-rsync -av --exclude node_modules --exclude dist --exclude data --exclude data-demo-backup --exclude .env --exclude .git ./ root@DROPLET_IP:/opt/portal/
-ssh root@DROPLET_IP "cd /opt/portal && docker compose up -d --build"
+bash scripts/deploy-cloud-run.sh
 ```
+It builds the `Dockerfile` with Cloud Build, deploys service `infominer-portal` as the `portal-run` service account, and prints the address (`https://infominer-portal-<project number>.asia-south1.run.app`). For your own domain, map it in Cloud Run → Domain mappings and redeploy with `APP_ORIGIN=https://portal.example.in bash scripts/deploy-cloud-run.sh`.
 
-**Backups:** droplet backups cover the whole disk. Also keep an offline copy of `MASTER_KEY`; without it, a backup's documents cannot be decrypted.
+Test the Firestore server locally against the emulator (never the real project; the tests refuse to run without it):
+```bash
+npm run emulator
+```
+```bash
+FIRESTORE_EMULATOR_HOST=127.0.0.1:8089 GOOGLE_CLOUD_PROJECT=demo-infominer DOCS_BUCKET= OTP_PROVIDER=file DATA_DIR=./.test-data/fs npm run test:fs:portal
+```
 
 ## Before go-live checklist
 

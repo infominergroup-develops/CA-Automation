@@ -2,6 +2,7 @@
  * Proves the Firestore identity core, audit chain and consent against the emulator.
  * Run: npm run test:fs   (starts nothing — the emulator must already be running on 8089)
  */
+import './emulator-only.mts';
 import { db } from '../server/firestore/client.ts';
 import { verifyPassword } from '../server/security/crypto.ts';
 import { createStaffUser, createClientUser, findUserByIdentifier, getUserById, isLocked, recordLoginFailure, UniquenessError } from '../server/firestore/users.ts';

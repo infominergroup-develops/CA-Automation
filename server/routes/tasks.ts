@@ -5,17 +5,9 @@ import { assertCompany, companyScope, inScope, isTaskOwner, loadTask, type TaskR
 import { all, one, run, tx, now, id } from '../db.ts';
 import { auditReq, parse, zDate, zId, zText } from '../http.ts';
 import { HttpError, requireAuth, requireRole } from '../security/session.ts';
+import { CLIENT_STATUS, TASK_TYPES } from '../shared.ts';
 
 export const tasksRouter = Router();
-
-export const TASK_TYPES = ['GST return', 'TDS return', 'Income tax return', 'Bookkeeping', 'Bank reconciliation',
-  'Audit', 'ROC filing', 'Certificate', 'Other'] as const;
-
-/** What a client sees instead of internal statuses. */
-const CLIENT_STATUS: Record<string, string> = {
-  requested: 'Received', assigned: 'Received', in_progress: 'In progress', rework: 'In progress',
-  submitted: 'Under review', approved: 'Completed', cancelled: 'Cancelled',
-};
 
 function transition(req: Request, t: TaskRow, to: string, comment?: string, extra: Record<string, unknown> = {}) {
   const sets = Object.keys(extra).map((k) => `${k} = ?`);

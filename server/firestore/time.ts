@@ -3,6 +3,9 @@ import { db } from './client.ts';
 import { getById, newId, now, query } from './store.ts';
 import { C, type TimeEntryDoc } from './types.ts';
 
+/** The day after a YYYY-MM-DD date, as YYYY-MM-DD (an exclusive upper bound for ISO timestamps). */
+export const nextDay = (d: string) => new Date(Date.parse(`${d}T00:00:00Z`) + 86400e3).toISOString().slice(0, 10);
+
 /** Worked seconds = wall-clock from start to (end | last heartbeat | start), minus idle seconds. */
 export function workedSeconds(e: TimeEntryDoc): number {
   const end = Date.parse(e.ended_at ?? e.last_heartbeat ?? e.started_at);
@@ -73,9 +76,9 @@ export async function decideManualEntry(id: string, deciderId: string, decision:
 
 /** Entries for a user in a date range (inclusive), newest first. */
 export async function listEntries(userId: string, from: string, to: string): Promise<TimeEntryDoc[]> {
-  const rows = await query<TimeEntryDoc>(C.timeEntries, { where: [['user_id', '==', userId]], orderBy: [['started_at', 'desc']] });
-  const toEnd = `${to}T23:59:59`;
-  return rows.filter((e) => e.started_at >= from && e.started_at <= toEnd);
+  const rows = await query<TimeEntryDoc>(C.timeEntries, { where: [['user_id', '==', userId]] });
+  const before = nextDay(to);
+  return rows.filter((e) => e.started_at >= from && e.started_at < before).sort((a, b) => b.started_at.localeCompare(a.started_at));
 }
 
 /** Seconds logged on a task (approved/ok entries only). */
@@ -88,6 +91,7 @@ export async function taskSeconds(taskId: string): Promise<number> {
 export async function sweepStaleTimers(): Promise<void> {
   const cutoff = new Date(Date.now() - config.timerStaleMinutes * 60e3).toISOString();
   const running = await query<TimeEntryDoc>(C.timeEntries, { where: [['ended_at', '==', null]] });
-  await Promise.all(running.filter((e) => (e.last_heartbeat ?? e.started_at) < cutoff)
+  const lateIst = new Date(Date.now() + 5.5 * 3600e3).getUTCHours() >= 21; // hard stop at 21:00 IST
+  await Promise.all(running.filter((e) => lateIst || (e.last_heartbeat ?? e.started_at) < cutoff)
     .map((e) => entries().doc(e.id).update({ ended_at: e.last_heartbeat ?? e.started_at })));
 }

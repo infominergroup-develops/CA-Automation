@@ -11,7 +11,9 @@ import path from 'node:path';
 const ROOT = path.resolve(import.meta.dirname, '..');
 const DATA = path.join(ROOT, '.test-data');
 const API = 'http://localhost:3201/api';
-const env = { ...process.env, NODE_ENV: 'development', API_PORT: '3201', WEB_PORT: '5273', API_PROXY: 'http://localhost:3201', APP_ORIGIN: 'http://localhost:5273', DATA_DIR: DATA, OTP_PROVIDER: 'file', NODE_NO_WARNINGS: '1' };
+const env = { ...process.env, NODE_ENV: 'development', API_PORT: '3201', WEB_PORT: '5273', API_PROXY: 'http://localhost:3201', APP_ORIGIN: 'http://localhost:5273', DATA_DIR: DATA, OTP_PROVIDER: 'file', NODE_NO_WARNINGS: '1',
+  // Fixed test director, independent of the developer's .env.
+  SEED_DIRECTOR_NAME: 'Demo Director', SEED_DIRECTOR_EMAIL: 'director@demo.test', SEED_DIRECTOR_MOBILE: '9000000001' };
 const kids: ChildProcess[] = [];
 const start = (cmd: string, args: string[], extra: Record<string, string> = {}) => {
   const p = spawn(cmd, args, { cwd: ROOT, env: { ...env, ...extra }, stdio: ['ignore', 'inherit', 'inherit'] });

@@ -2,6 +2,7 @@
  * End-to-end over real HTTP: the Firestore-backed Express app, sign-in flow, sessions, CSRF, lockout.
  * Run: npm run test:fs:http   (emulator on 8089; uses OTP_PROVIDER=file to read codes)
  */
+import './emulator-only.mts';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';

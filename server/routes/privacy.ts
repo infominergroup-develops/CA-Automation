@@ -4,45 +4,11 @@ import { verifyAuditChain } from '../audit.ts';
 import { all, one, run, tx, now, id, setting } from '../db.ts';
 import { auditReq, parse, zText } from '../http.ts';
 import { HttpError, destroySession, requireAuth, requireRole } from '../security/session.ts';
+import { NOTICE_SETTING_KEYS, PURPOSES, privacyNotice } from '../shared.ts';
 
 export const privacyRouter = Router();
 
-/** Purposes for which client personal data is processed. Only `service` is required to use the portal. */
-export const PURPOSES = [
-  { code: 'service', required: true, label: 'Providing the accounting, tax and compliance services you engaged us for, including storing your documents and preparing your reports and returns.' },
-  { code: 'updates', required: false, label: 'Sending you task updates, document reminders and reports on WhatsApp and SMS.' },
-] as const;
-
-function notice() {
-  const firm = setting('firm_name');
-  return {
-    version: setting('privacy_notice_version'),
-    firm,
-    purposes: PURPOSES,
-    dataCollected: [
-      'Your name, mobile number and email address',
-      'Business and tax identifiers (PAN, GSTIN) of the companies we serve for you',
-      'Financial records and documents you upload, and reports generated from your books',
-      'Sign-in records (time, IP address, device) kept for security',
-    ],
-    rights: [
-      'See a summary of the personal data we hold about you (download it any time from this page)',
-      'Ask for correction or completion of inaccurate data',
-      'Ask for erasure, subject to records we must legally keep (tax and audit records are typically kept 8 years)',
-      'Withdraw consent at any time; this is as easy as giving it, but stops portal access for the purposes withdrawn',
-      'Nominate a person to exercise these rights on your behalf',
-      'Raise a grievance with our Grievance Officer, and if unresolved, complain to the Data Protection Board of India',
-    ],
-    retention: 'Documents and financial records are kept for as long as the law requires us to (typically 8 years from the end of the relevant financial year), then deleted. Sign-in records are kept for 1 year.',
-    security: 'Documents are encrypted at rest, each file is fingerprinted (SHA-256) and checked on every download, and every access is recorded in a tamper-evident log. Data is hosted in India.',
-    grievanceOfficer: {
-      name: setting('grievance_officer_name'),
-      email: setting('grievance_officer_email'),
-      phone: setting('grievance_officer_phone'),
-    },
-    responseDays: Number(setting('dpdp_response_days')),
-  };
-}
+const notice = () => privacyNotice(Object.fromEntries(NOTICE_SETTING_KEYS.map((k) => [k, setting(k)])) as Parameters<typeof privacyNotice>[0]);
 
 privacyRouter.get('/privacy/notice', (_req, res) => res.json(notice()));
 

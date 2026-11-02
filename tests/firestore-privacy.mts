@@ -2,6 +2,7 @@
  * Proves the DPDP tooling on Firestore: data-principal requests, breach register, consent withdrawal, and
  * the "download my data" export. Run: npm run test:fs:privacy   (emulator on 8089)
  */
+import './emulator-only.mts';
 import { db } from '../server/firestore/client.ts';
 import { ensureSettingDefaults, getSetting } from '../server/firestore/settings.ts';
 import { createClientUser } from '../server/firestore/users.ts';

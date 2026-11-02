@@ -9,6 +9,8 @@ export interface Me {
   needsMonitoringAck?: boolean;
   noticeVersion?: string;
   firmName?: string;
+  /** Absent on servers that have every feature. */
+  features?: { tally?: boolean };
 }
 
 interface AuthCtx {
@@ -49,5 +51,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
 export const useAuth = () => useContext(Ctx);
 export const useUser = () => useContext(Ctx).me!.user!;
+/** Tally sync and reports, unless the server says they are not available. */
+export const useHasTally = () => useContext(Ctx).me?.features?.tally !== false;
 export const isStaff = (r: Role) => r !== 'client';
 export const isManagerial = (r: Role) => r === 'director' || r === 'manager';

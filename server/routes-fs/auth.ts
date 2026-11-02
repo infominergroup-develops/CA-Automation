@@ -103,5 +103,6 @@ authRouter.get('/me', h(async (req, res) => {
     noticeVersion: await getSetting('privacy_notice_version'),
     firmName: await getSetting('firm_name'),
     serverTime: new Date().toISOString(),
+    features: { tally: false }, // Tally sync and reports are not on Firestore yet
   });
 }));

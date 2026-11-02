@@ -24,7 +24,7 @@ const isProd = process.env.NODE_ENV === 'production';
 
 export const config = {
   isProd,
-  port: Number(process.env.API_PORT ?? 3001),
+  port: Number(process.env.PORT ?? process.env.API_PORT ?? 3001), // Cloud Run sets PORT
   appOrigin: process.env.APP_ORIGIN ?? 'http://localhost:5173',
   masterKey: key('MASTER_KEY'),
   otpSecret: key('OTP_SECRET'),

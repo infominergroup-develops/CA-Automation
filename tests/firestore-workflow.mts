@@ -3,6 +3,7 @@
  * security rule that approving a task ends the employee's access and stops their timer.
  * Run: npm run test:fs:flow   (emulator must be running on 8089)
  */
+import './emulator-only.mts';
 import { db } from '../server/firestore/client.ts';
 import {
   createTask, createClientRequest, getTask, startTask, submitTask, rejectTask, approveTask, cancelTask, assignTask,

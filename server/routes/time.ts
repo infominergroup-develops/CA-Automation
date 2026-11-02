@@ -5,11 +5,10 @@ import { inScope, loadTask } from '../authz.ts';
 import { all, one, run, tx, now, id } from '../db.ts';
 import { auditReq, parse, zDate, zId, zText } from '../http.ts';
 import { HttpError, requireRole } from '../security/session.ts';
+import { NON_TASK } from '../shared.ts';
 
 export const timeRouter = Router();
 timeRouter.use('/time', requireRole('director', 'manager', 'employee'));
-
-export const NON_TASK = ['Training', 'Internal meeting', 'Admin', 'Client visit', 'Travel'] as const;
 
 /** Staff must have acknowledged the monitoring notice before any time is recorded. */
 function requireAck(req: Request, _res: Response, next: NextFunction) {

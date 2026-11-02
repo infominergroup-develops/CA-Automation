@@ -22,7 +22,8 @@ export async function raiseRequest(userId: string, type: DpdpRequestDoc['type'],
 }
 
 export const requestsForUser = (userId: string) =>
-  query<DpdpRequestDoc>(C.dpdpRequests, { where: [['user_id', '==', userId]], orderBy: [['created_at', 'desc']] });
+  query<DpdpRequestDoc>(C.dpdpRequests, { where: [['user_id', '==', userId]] })
+    .then((rows) => rows.sort((a, b) => b.created_at.localeCompare(a.created_at)));
 export const allRequests = () =>
   query<DpdpRequestDoc>(C.dpdpRequests, { orderBy: [['created_at', 'desc']] });
 

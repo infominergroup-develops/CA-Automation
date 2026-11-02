@@ -2,13 +2,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Router } from 'express';
 import multer from 'multer';
-import { fileTypeFromBuffer } from 'file-type';
 import { z } from 'zod';
 import { config } from '../config.ts';
 import { assertCompany, canViewDocument, employeeCategories, inScope } from '../authz.ts';
 import { all, one, run, now, id } from '../db.ts';
 import { auditReq, parse, zFy, zText } from '../http.ts';
 import { decryptFile, encryptFile, sha256 } from '../security/crypto.ts';
+import { cleanName, detectType } from '../shared.ts';
 import { HttpError, requireAuth, requireRole } from '../security/session.ts';
 
 export const documentsRouter = Router();
@@ -18,37 +18,7 @@ const upload = multer({
   limits: { fileSize: config.maxUploadBytes, files: 20, fields: 10 },
 });
 
-/** Allowed types are decided from the file's bytes, never from its name or the browser's claim. */
-const ALLOWED: Record<string, string> = {
-  pdf: 'application/pdf',
-  jpg: 'image/jpeg',
-  png: 'image/png',
-  webp: 'image/webp',
-  heic: 'image/heic',
-  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  xls: 'application/vnd.ms-excel',
-  cfb: 'application/vnd.ms-excel',
-  zip: 'application/zip',
-};
-
-async function detectType(buf: Buffer, name: string): Promise<string | null> {
-  const t = await fileTypeFromBuffer(buf);
-  if (t && ALLOWED[t.ext]) return ALLOWED[t.ext];
-  // CSV and plain text have no signature: accept only by extension, and only if the bytes are text.
-  if (!t && /\.(csv|txt)$/i.test(name) && !buf.subarray(0, 8192).includes(0)) {
-    return name.toLowerCase().endsWith('.csv') ? 'text/csv' : 'text/plain';
-  }
-  return null;
-}
-
 const filePath = (docId: string) => path.join(config.dataDir, 'files', `${docId}.bin`);
-
-function cleanName(name: string) {
-  // multer gives latin1-decoded names; restore UTF-8 and strip path and control characters.
-  const utf8 = Buffer.from(name, 'latin1').toString('utf8');
-  return path.basename(utf8).replace(/[\u0000-\u001f\u007f"\\/<>:|?*]/g, '_').slice(0, 180) || 'file';
-}
 
 interface DocRow {
   id: string;

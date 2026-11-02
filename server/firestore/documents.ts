@@ -67,10 +67,9 @@ export async function createDocument(u: UploadInput): Promise<{ id: string; sha2
 }
 
 export async function listDocuments(companyId: string, filter: { categoryId?: string; fy?: string } = {}): Promise<DocumentMeta[]> {
-  const rows = await query<DocumentDoc>(C.documents, {
-    where: [['company_id', '==', companyId], ['deleted_at', '==', null]],
-    orderBy: [['created_at', 'desc']], limit: 1000,
-  });
+  // Equality filters only (sorted here), so no composite index is needed.
+  const rows = (await query<DocumentDoc>(C.documents, { where: [['company_id', '==', companyId], ['deleted_at', '==', null]] }))
+    .sort((a, b) => b.created_at.localeCompare(a.created_at));
   // category/fy filtered in memory to avoid an index per combination (document counts per company are modest).
   return rows.filter((d) => (!filter.categoryId || d.category_id === filter.categoryId) && (!filter.fy || d.fy === filter.fy)).map(strip);
 }

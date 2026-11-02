@@ -3,6 +3,7 @@
  * duplicates, review, soft delete) against the emulator + local blob store.
  * Run: npm run test:fs:docs   (emulator must be running on 8089)
  */
+import './emulator-only.mts';
 import { db } from '../server/firestore/client.ts';
 import {
   ensureCategories, listCategories, createDocument, listDocuments, getDocumentMeta, readDocument,

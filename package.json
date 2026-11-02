@@ -25,7 +25,8 @@
     "test:fs:http": "tsx tests/fs-http-auth.mts",
     "dev:fs": "concurrently -k -n api,web \"GRPC_DNS_RESOLVER=native tsx watch server/index-fs.ts\" \"vite --port 5173\"",
     "start:fs": "GRPC_DNS_RESOLVER=native NODE_ENV=production tsx server/index-fs.ts",
-    "seed:fs": "GRPC_DNS_RESOLVER=native tsx server/seed-fs.ts"
+    "seed:fs": "GRPC_DNS_RESOLVER=native tsx server/seed-fs.ts",
+    "test:fs:portal": "tsx tests/fs-http-portal.mts"
   },
   "dependencies": {
     "@aws-sdk/client-secrets-manager": "^3.1147.0",
@@ -33,6 +34,7 @@
     "@fontsource/ibm-plex-mono": "^5.3.0",
     "@fontsource/ibm-plex-sans": "^5.3.0",
     "@google-cloud/firestore": "^9.3.1",
+    "@google-cloud/secret-manager": "^6.3.0",
     "@google-cloud/storage": "^8.2.0",
     "@gsap/react": "^2.1.2",
     "cookie-parser": "^1.4.7",

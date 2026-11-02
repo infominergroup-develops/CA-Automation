@@ -163,7 +163,8 @@ export const clientRequests = () =>
 export const pendingAccessRequests = () =>
   query<AccessGrantDoc>(C.accessGrants, { where: [['status', '==', 'requested']] });
 export const grantsForTask = (taskId: string) =>
-  query<AccessGrantDoc>(C.accessGrants, { where: [['task_id', '==', taskId]], orderBy: [['created_at', 'desc']] });
+  query<AccessGrantDoc>(C.accessGrants, { where: [['task_id', '==', taskId]] })
+    .then((rows) => rows.sort((a, b) => b.created_at.localeCompare(a.created_at)));
 export const eventsForTask = async (taskId: string): Promise<TaskEventDoc[]> => {
   const snap = await events(taskId).orderBy('created_at').get();
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }) as TaskEventDoc);

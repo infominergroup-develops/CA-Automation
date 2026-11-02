@@ -23,6 +23,20 @@ export const C = {
 
 export type Role = 'director' | 'manager' | 'employee' | 'client';
 
+export interface ClientGroupDoc { id: string; name: string; created_at: string; created_by: string | null }
+
+export interface CompanyDoc {
+  id: string;
+  group_id: string;
+  legal_name: string;
+  pan: string | null;
+  gstin: string | null;
+  tally_name: string | null;
+  manager_id: string | null;
+  created_at: string;
+  created_by: string | null;
+}
+
 export interface UserDoc {
   id: string;
   role: Role;

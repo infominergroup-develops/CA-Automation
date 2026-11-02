@@ -17,15 +17,7 @@ export function auditReq(req: Request, e: Omit<AuditEntry, 'actorId' | 'actorRol
   audit({ ...e, actorId: req.user?.id ?? null, actorRole: req.user?.role ?? null, ip: req.ip ?? null });
 }
 
-export const zId = z.uuid();
-export const zText = (max: number) => z.string().trim().max(max);
-export const zFy = z.string().regex(/^20\d{2}-\d{2}$/, 'Use a financial year like 2025-26');
-export const zDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD');
-export const zMobile = z.string().trim().transform((s) => s.replace(/[\s-]/g, '').replace(/^(\+91|0)/, ''))
-  .pipe(z.string().regex(/^[6-9]\d{9}$/, 'Enter a 10-digit Indian mobile number'));
-export const zEmail = z.string().trim().toLowerCase().pipe(z.email());
-export const zPan = z.string().trim().toUpperCase().regex(/^[A-Z]{5}\d{4}[A-Z]$/, 'Invalid PAN');
-export const zGstin = z.string().trim().toUpperCase().regex(/^\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/, 'Invalid GSTIN');
+export { zDate, zEmail, zFy, zGstin, zId, zMobile, zPan, zText } from './shared.ts';
 
 /** Masks a mobile or email for display, e.g. ******3210. */
 export function mask(v: string | null): string | null {
