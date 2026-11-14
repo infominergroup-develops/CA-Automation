@@ -1,10 +1,11 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { config } from '../config.ts';
 import { zEmail, zGstin, zId, zMobile, zPan, zText } from '../shared.ts';
 import { passwordProblem, verifyPassword } from '../security/crypto.ts';
 import { assertCompany, companyScope, userNames } from '../firestore/authz.ts';
 import { db } from '../firestore/client.ts';
-import { HttpError, auditReq, h, parse, requireAuth, requireRole } from '../firestore/http.ts';
+import { HttpError, auditReq, h, parse, requireAuth, requireRole, type SessionUser } from '../firestore/http.ts';
 import { endAllSessions } from '../firestore/sessions.ts';
 import { getSettings, setSetting } from '../firestore/settings.ts';
 import { getById, newId, now, query } from '../firestore/store.ts';
@@ -96,7 +97,23 @@ const companyFields = z.object({
   tally_name: zText(200).optional(),
   manager_id: zId.optional(),
 });
-const contactFields = z.object({ name: zText(120).min(2), mobile: zMobile, email: optional(zEmail) });
+const contactFields = z.object({ name: zText(120).min(2), mobile: zMobile, email: optional(zEmail), password: z.string().max(200).optional() });
+
+/** While OTP is off a client signs in with the password the firm sets, so it is required and must be strong. */
+function clientPassword(pw: string | undefined): string | undefined {
+  if (config.otpProvider !== 'off') return undefined;
+  const problem = pw ? passwordProblem(pw) : 'Set a password for the client to sign in with.';
+  if (problem) throw new HttpError(400, problem);
+  return pw;
+}
+
+/** 404 unless the user may see at least one company in the client group. */
+async function assertGroupInScope(u: SessionUser, groupId: string) {
+  const scope = await companyScope(u);
+  if (!scope) return;
+  const companies = await query<CompanyDoc>(C.companies, { where: [['group_id', '==', groupId]] });
+  if (!companies.some((c) => scope.includes(c.id))) throw new HttpError(404, 'Not found.');
+}
 
 async function checkManager(managerId: string | undefined) {
   if (!managerId) return;
@@ -113,9 +130,10 @@ adminRouter.post('/clients', requireRole('director', 'manager'), h(async (req, r
   const b = parse(z.object({ group_name: zText(200).min(2), company: companyFields, contact: contactFields }), req.body);
   const managerId = b.company.manager_id ?? (req.user!.role === 'manager' ? req.user!.id : undefined);
   await checkManager(managerId);
+  const password = clientPassword(b.contact.password);
   const groupId = newId(), companyId = newId();
   // The login first: it is the step that can fail on a duplicate mobile/email, before anything else is written.
-  const userId = await createClientUser({ name: b.contact.name, mobile: b.contact.mobile, email: b.contact.email, clientGroupId: groupId, createdBy: req.user!.id })
+  const userId = await createClientUser({ name: b.contact.name, mobile: b.contact.mobile, email: b.contact.email, clientGroupId: groupId, createdBy: req.user!.id, password })
     .catch((e) => duplicate(e, 'A user with this mobile or email already exists.'));
   const batch = db.batch();
   batch.set(db.collection(C.clientGroups).doc(groupId), { id: groupId, name: b.group_name, created_at: now(), created_by: req.user!.id } satisfies ClientGroupDoc);
@@ -145,15 +163,26 @@ adminRouter.post('/clients/:groupId/users', requireRole('director', 'manager'), 
   const b = parse(contactFields, req.body);
   const group = await getById<ClientGroupDoc>(C.clientGroups, String(req.params.groupId));
   if (!group) throw new HttpError(404, 'Not found.');
-  const scope = await companyScope(req.user!);
-  if (scope) {
-    const companies = await query<CompanyDoc>(C.companies, { where: [['group_id', '==', group.id]] });
-    if (!companies.some((c) => scope.includes(c.id))) throw new HttpError(404, 'Not found.');
-  }
-  const userId = await createClientUser({ name: b.name, mobile: b.mobile, email: b.email, clientGroupId: group.id, createdBy: req.user!.id })
+  await assertGroupInScope(req.user!, group.id);
+  const password = clientPassword(b.password);
+  const userId = await createClientUser({ name: b.name, mobile: b.mobile, email: b.email, clientGroupId: group.id, createdBy: req.user!.id, password })
     .catch((e) => duplicate(e, 'A user with this mobile or email already exists.'));
   await auditReq(req, { action: 'client.user_added', objectType: 'user', objectId: userId });
   res.status(201).json({ id: userId });
+}));
+
+/** Sets or resets a client's sign-in password (clients use one while OTP is off). Signs them out everywhere. */
+adminRouter.post('/users/:id/password', requireRole('director', 'manager'), h(async (req, res) => {
+  const { password } = parse(z.object({ password: z.string().max(200) }), req.body);
+  const target = await getUserById(String(req.params.id));
+  if (!target || target.role !== 'client' || !target.client_group_id) throw new HttpError(404, 'Not found.');
+  await assertGroupInScope(req.user!, target.client_group_id);
+  const problem = passwordProblem(password);
+  if (problem) throw new HttpError(400, problem);
+  await updatePassword(target.id, password);
+  await endAllSessions(target.id);
+  await auditReq(req, { action: 'user.password_set', objectType: 'user', objectId: target.id });
+  res.json({ ok: true });
 }));
 
 adminRouter.get('/companies', requireAuth, h(async (req, res) => {

@@ -11,6 +11,8 @@ export interface Me {
   firmName?: string;
   /** Absent on servers that have every feature. */
   features?: { tally?: boolean };
+  /** Clients sign in with a firm-set password (one-time codes are off). */
+  clientPassword?: boolean;
 }
 
 interface AuthCtx {
@@ -30,14 +32,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setMe({ user: null });
     }
   }, []);
+  // Signed out, /auth/me still says how the login page should look (e.g. client password sign-in).
   const logout = useCallback(async () => {
     await api('/auth/logout', { body: {} }).catch(() => {});
-    setMe({ user: null });
-  }, []);
+    await refresh();
+  }, [refresh]);
 
   useEffect(() => {
     refresh();
-    const expired = () => setMe({ user: null });
+    const expired = () => { refresh(); };
     window.addEventListener('session-expired', expired);
     window.addEventListener('refresh-me', refresh);
     return () => {
@@ -53,5 +56,6 @@ export const useAuth = () => useContext(Ctx);
 export const useUser = () => useContext(Ctx).me!.user!;
 /** Tally sync and reports, unless the server says they are not available. */
 export const useHasTally = () => useContext(Ctx).me?.features?.tally !== false;
+export const useClientPassword = () => useContext(Ctx).me?.clientPassword === true;
 export const isStaff = (r: Role) => r !== 'client';
 export const isManagerial = (r: Role) => r === 'director' || r === 'manager';

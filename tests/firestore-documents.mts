@@ -6,10 +6,10 @@
 import './emulator-only.mts';
 import { db } from '../server/firestore/client.ts';
 import {
-  ensureCategories, listCategories, createDocument, listDocuments, getDocumentMeta, readDocument,
+  ensureCategories, listCategories, createDocument, docFolder, listDocuments, getDocumentMeta, readDocument,
   reviewDocument, softDeleteDocument, findDuplicate, IntegrityError, DEFAULT_CATEGORIES,
 } from '../server/firestore/documents.ts';
-import { blobs, blobKey } from '../server/firestore/storage.ts';
+import { blobs } from '../server/firestore/storage.ts';
 import { C } from '../server/firestore/types.ts';
 
 let pass = 0, fail = 0;
@@ -29,11 +29,15 @@ check('category has a stable slug id', bank === 'bank-statements');
 // --- Upload
 const COMPANY = 'co-demo-1';
 const plain = Buffer.from('%PDF-1.4\nHDFC Bank statement September 2026\n%%EOF\n');
-const up = await createDocument({ companyId: COMPANY, categoryId: bank, fy: '2026-27', month: 9, name: 'HDFC Sep.pdf', mime: 'application/pdf', bytes: plain, uploadedBy: 'u-client' });
+const folder = docFolder('Mehta Group', 'Mehta Traders Pvt Ltd', '2026-27', 'Bank statements');
+const up = await createDocument({ companyId: COMPANY, categoryId: bank, fy: '2026-27', month: 9, name: 'HDFC Sep.pdf', mime: 'application/pdf', bytes: plain, uploadedBy: 'u-client', folder });
 check('upload returns id + hash', !!up.id && up.sha256.length === 64 && up.duplicateOf === null);
 
 // --- Encrypted at rest
-const stored = await blobs.get(blobKey(COMPANY, up.id));
+const key = (await getDocumentMeta(up.id))!.blob_key;
+check('stored in client / company / FY / category folder', key.startsWith('Mehta Group/Mehta Traders Pvt Ltd/2026-27/Bank statements/') && key.endsWith(`_HDFC Sep.pdf.${up.id}.enc`), key);
+check('folder names cannot escape or add levels', docFolder('../evil', 'A/B', '2026-27', '..') === '__evil/A_B/2026-27/_');
+const stored = await blobs.get(key);
 check('stored bytes are ciphertext (not the plaintext)', !stored.includes(Buffer.from('%PDF')) && !stored.equals(plain));
 
 // --- List hides crypto fields
@@ -49,12 +53,12 @@ check('download decrypts to the original bytes', got.bytes.equals(plain));
 check('download verifies the fingerprint', got.sha256 === up.sha256);
 
 // --- Duplicate detection
-const dup = await createDocument({ companyId: COMPANY, categoryId: bank, fy: '2026-27', month: 9, name: 'copy.pdf', mime: 'application/pdf', bytes: plain, uploadedBy: 'u-client' });
+const dup = await createDocument({ companyId: COMPANY, categoryId: bank, fy: '2026-27', month: 9, name: 'copy.pdf', mime: 'application/pdf', bytes: plain, uploadedBy: 'u-client', folder });
 check('identical file flagged as duplicate', dup.duplicateOf?.id === up.id);
 check('findDuplicate matches by company + hash', (await findDuplicate(COMPANY, up.sha256))?.id !== undefined);
 
 // --- Category / FY filter
-await createDocument({ companyId: COMPANY, categoryId: purchase, fy: '2025-26', month: null, name: 'bill.pdf', mime: 'application/pdf', bytes: Buffer.from('%PDF bill'), uploadedBy: 'u-client' });
+await createDocument({ companyId: COMPANY, categoryId: purchase, fy: '2025-26', month: null, name: 'bill.pdf', mime: 'application/pdf', bytes: Buffer.from('%PDF bill'), uploadedBy: 'u-client', folder: docFolder('Mehta Group', 'Mehta Traders Pvt Ltd', '2025-26', 'Purchase bills') });
 check('filter by category', (await listDocuments(COMPANY, { categoryId: purchase })).length === 1);
 check('filter by financial year', (await listDocuments(COMPANY, { fy: '2026-27' })).length === 2);
 
@@ -63,7 +67,7 @@ await reviewDocument(up.id, 'accepted', null, 'u-manager');
 check('review status updates', (await getDocumentMeta(up.id))!.review_status === 'accepted');
 
 // --- Tamper detection
-await blobs.put(blobKey(COMPANY, up.id), Buffer.concat([stored, Buffer.from('X')])); // corrupt the ciphertext
+await blobs.put(key, Buffer.concat([stored, Buffer.from('X')])); // corrupt the ciphertext
 let tampered = false;
 try { await readDocument((await getDocumentMeta(up.id))!); } catch (e) { tampered = e instanceof IntegrityError; }
 check('tampered file is refused on download', tampered);

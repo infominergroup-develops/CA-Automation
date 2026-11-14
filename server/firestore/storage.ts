@@ -42,5 +42,3 @@ export const blobs: BlobStore = config.docsBucket
   ? new GcsBlob(config.docsBucket)
   : new LocalBlob(path.join(config.dataDir, 'files'));
 
-/** Storage key for a document's encrypted bytes. */
-export const blobKey = (companyId: string, docId: string) => `${companyId}/${docId}.bin`;

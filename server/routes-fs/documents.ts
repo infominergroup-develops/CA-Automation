@@ -5,10 +5,12 @@ import { config } from '../config.ts';
 import { cleanName, detectType, zFy, zText } from '../shared.ts';
 import { assertCompany, canViewDocument, inScope, userNames } from '../firestore/authz.ts';
 import {
-  IntegrityError, createDocument, getDocumentMeta, listCategories, listDocuments, readDocument, reviewDocument, softDeleteDocument,
+  IntegrityError, createDocument, docFolder, getDocumentMeta, listCategories, listDocuments, readDocument, reviewDocument, softDeleteDocument,
 } from '../firestore/documents.ts';
 import { HttpError, auditReq, h, parse, requireAuth, requireRole } from '../firestore/http.ts';
+import { getById } from '../firestore/store.ts';
 import { employeeCategories } from '../firestore/tasks.ts';
+import { C, type ClientGroupDoc } from '../firestore/types.ts';
 
 export const documentsRouter = Router();
 
@@ -46,13 +48,16 @@ documentsRouter.get('/companies/:companyId/documents', requireAuth, h(async (req
 
 documentsRouter.post('/companies/:companyId/documents', requireAuth, upload.array('files', 20), h(async (req, res) => {
   const companyId = String(req.params.companyId);
-  await assertCompany(req.user!, companyId);
+  const company = await assertCompany(req.user!, companyId);
   const b = parse(z.object({
     category_id: zCategory,
     fy: zFy,
     month: z.coerce.number().int().min(1).max(12).optional().or(z.literal('').transform(() => undefined)),
   }), req.body);
-  if (!(await listCategories()).some((c) => c.id === b.category_id)) throw new HttpError(400, 'Unknown category.');
+  const category = (await listCategories()).find((c) => c.id === b.category_id);
+  if (!category) throw new HttpError(400, 'Unknown category.');
+  const group = await getById<ClientGroupDoc>(C.clientGroups, company.group_id);
+  const folder = docFolder(group?.name ?? company.group_id, company.legal_name, b.fy, category.name);
   const files = (req.files as Express.Multer.File[] | undefined) ?? [];
   if (!files.length) throw new HttpError(400, 'Choose at least one file.');
 
@@ -66,7 +71,7 @@ documentsRouter.post('/companies/:companyId/documents', requireAuth, upload.arra
 
   const saved = [];
   for (const p of prepared) {
-    const d = await createDocument({ companyId, categoryId: b.category_id, fy: b.fy, month: b.month ?? null, name: p.name, mime: p.mime, bytes: p.f.buffer, uploadedBy: req.user!.id });
+    const d = await createDocument({ companyId, categoryId: b.category_id, fy: b.fy, month: b.month ?? null, name: p.name, mime: p.mime, bytes: p.f.buffer, uploadedBy: req.user!.id, folder });
     await auditReq(req, { action: 'document.uploaded', objectType: 'document', objectId: d.id, companyId,
       details: { name: p.name, size: p.f.size, sha256: d.sha256, category_id: b.category_id, fy: b.fy, duplicateOf: d.duplicateOf?.id } });
     saved.push({ id: d.id, name: p.name, sha256: d.sha256, duplicateOf: d.duplicateOf ? { id: d.duplicateOf.id, uploadedAt: d.duplicateOf.created_at } : null });

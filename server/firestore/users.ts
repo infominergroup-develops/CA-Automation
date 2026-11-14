@@ -40,9 +40,10 @@ export async function createStaffUser(s: NewStaff): Promise<string> {
   return id;
 }
 
-/** Creates a client login under a client group (clients sign in with OTP only; no password). */
-export async function createClientUser(c: { name: string; email?: string; mobile: string; clientGroupId: string; createdBy?: string }): Promise<string> {
+/** Creates a client login under a client group. Clients sign in with OTP, or with `password` while OTP is off. */
+export async function createClientUser(c: { name: string; email?: string; mobile: string; clientGroupId: string; createdBy?: string; password?: string }): Promise<string> {
   const email = c.email?.trim().toLowerCase() || null;
+  const passwordHash = c.password ? await hashPassword(c.password) : null;
   const mobile = normalizeMobile(c.mobile);
   const id = newId();
   await db.runTransaction(async (t) => {
@@ -51,7 +52,7 @@ export async function createClientUser(c: { name: string; email?: string; mobile
     if (email) claimUnique(t, C.uniqueEmail, email, id); // then writes
     claimUnique(t, C.uniqueMobile, mobile, id);
     const u: UserDoc = {
-      id, role: 'client', name: c.name, email, mobile, password_hash: null, status: 'active',
+      id, role: 'client', name: c.name, email, mobile, password_hash: passwordHash, status: 'active',
       client_group_id: c.clientGroupId, failed_logins: 0, locked_until: null, monitoring_notice_ack_at: null,
       created_at: now(), created_by: c.createdBy ?? null, updated_at: now(),
     };

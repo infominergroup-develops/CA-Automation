@@ -30,17 +30,16 @@ async function deliverCode(to: { name: string; mobile: string | null; email: str
 }
 
 const loginSchema = z.discriminatedUnion('mode', [
-  z.object({ mode: z.literal('client'), identifier: z.string().trim().min(3).max(200) }),
+  z.object({ mode: z.literal('client'), identifier: z.string().trim().min(3).max(200), password: z.string().max(200).optional() }),
   z.object({ mode: z.literal('staff'), identifier: z.string().trim().min(3).max(200), password: z.string().min(1).max(200) }),
 ]);
 
-/** Step 1: identify. Clients → OTP. Staff → password + OTP. Same response whether or not the account exists. */
+/** Step 1: identify. Clients → OTP. Staff → password + OTP. With OTP off, both sign in with a password alone. */
 authRouter.post('/login', loginLimiter, h(async (req, res) => {
   const body = parse(loginSchema, req.body);
   const u = await findUserByIdentifier(body.identifier);
 
-  if (body.mode === 'client') {
-    if (config.otpProvider === 'off') throw new HttpError(403, 'Client sign-in is unavailable right now. Please contact the firm.');
+  if (body.mode === 'client' && config.otpProvider !== 'off') {
     const valid = !!u && u.role === 'client' && u.status === 'active' && !isLocked(u);
     const { challengeId, code } = await createChallenge(valid ? u!.id : null, clientIp(req));
     if (valid) await deliverCode(u!, code);
@@ -48,8 +47,9 @@ authRouter.post('/login', loginLimiter, h(async (req, res) => {
     return res.json({ challengeId, sentTo: valid ? mask(u!.mobile ?? u!.email) : mask(body.identifier) });
   }
 
-  const passwordOk = await verifyPassword(body.password, u?.password_hash);
-  if (!u || u.role === 'client' || u.status !== 'active') {
+  const passwordOk = await verifyPassword(body.password ?? '', u?.password_hash);
+  // Staff sign in on the staff tab, clients on the client tab.
+  if (!u || (u.role === 'client') !== (body.mode === 'client') || u.status !== 'active') {
     await auditReq(req, { action: 'auth.login_failed', details: { reason: 'unknown_or_inactive' } });
     throw new HttpError(401, 'Incorrect email or password.');
   }
@@ -94,7 +94,9 @@ authRouter.post('/logout', requireAuth, h(async (req, res) => {
 }));
 
 authRouter.get('/me', h(async (req, res) => {
-  if (!req.user) return res.json({ user: null });
+  // Tells the login page and client forms whether clients use a password (OTP off) or a one-time code.
+  const clientPassword = config.otpProvider === 'off';
+  if (!req.user) return res.json({ user: null, clientPassword });
   const u = req.user;
   res.json({
     user: u,
@@ -104,5 +106,6 @@ authRouter.get('/me', h(async (req, res) => {
     firmName: await getSetting('firm_name'),
     serverTime: new Date().toISOString(),
     features: { tally: false }, // Tally sync and reports are not on Firestore yet
+    clientPassword,
   });
 }));

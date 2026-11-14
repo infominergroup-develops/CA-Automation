@@ -1,7 +1,7 @@
 import { decryptFile, encryptFile, sha256 } from '../security/crypto.ts';
 import { db } from './client.ts';
 import { getById, newId, now, query } from './store.ts';
-import { blobKey, blobs } from './storage.ts';
+import { blobs } from './storage.ts';
 import { C } from './types.ts';
 
 /** Default document categories (same list as the SQLite build), keyed by a stable slug. */
@@ -17,6 +17,8 @@ export interface DocumentDoc {
   id: string; company_id: string; category_id: string; fy: string; month: number | null;
   original_name: string; mime: string; size: number; sha256: string;
   wrapped_key: string; iv: string; auth_tag: string;
+  /** Where the ciphertext lives in the bucket, e.g. `Mehta Group/Mehta Traders/2025-26/Bank statements/2026-04-15_April.pdf.<id>.enc`. */
+  blob_key: string;
   uploaded_by: string; review_status: 'pending' | 'accepted' | 'reupload' | 'not_needed';
   review_note: string | null; reviewed_by: string | null;
   deleted_at: string | null; deleted_by: string | null; created_at: string;
@@ -41,7 +43,18 @@ export async function findDuplicate(companyId: string, hash: string): Promise<Do
   return dup && strip(dup);
 }
 
-export interface UploadInput { companyId: string; categoryId: string; fy: string; month: number | null; name: string; mime: string; bytes: Buffer; uploadedBy: string }
+export interface UploadInput {
+  companyId: string; categoryId: string; fy: string; month: number | null; name: string; mime: string; bytes: Buffer; uploadedBy: string;
+  /** Bucket folder from docFolder(). */
+  folder: string;
+}
+
+/** One safe folder name: no slashes, control characters or leading dots (so no `..`). */
+const segment = (s: string) => s.replace(/[\u0000-\u001f\u007f/\\]/g, '_').trim().replace(/^\.+/, '_').slice(0, 100) || '_';
+
+/** Client group / company / financial year / category, as readable folders in the bucket. Contents stay encrypted. */
+export const docFolder = (group: string, company: string, fy: string, category: string) =>
+  [group, company, fy, category].map(segment).join('/');
 
 /** Encrypts the file, stores the ciphertext, and records metadata. Returns the id, hash and any duplicate. */
 export async function createDocument(u: UploadInput): Promise<{ id: string; sha256: string; duplicateOf: { id: string; created_at: string } | null }> {
@@ -49,18 +62,20 @@ export async function createDocument(u: UploadInput): Promise<{ id: string; sha2
   const dup = await findDuplicate(u.companyId, hash);
   const id = newId();
   const enc = encryptFile(u.bytes, id);
-  await blobs.put(blobKey(u.companyId, id), enc.body);
+  // The id keeps names unique; the date and name make the folder readable.
+  const key = `${u.folder}/${now().slice(0, 10)}_${segment(u.name)}.${id}.enc`;
+  await blobs.put(key, enc.body);
   try {
     const doc: DocumentDoc = {
       id, company_id: u.companyId, category_id: u.categoryId, fy: u.fy, month: u.month,
       original_name: u.name, mime: u.mime, size: u.bytes.length, sha256: hash,
-      wrapped_key: enc.wrappedKey, iv: enc.iv, auth_tag: enc.authTag,
+      wrapped_key: enc.wrappedKey, iv: enc.iv, auth_tag: enc.authTag, blob_key: key,
       uploaded_by: u.uploadedBy, review_status: 'pending', review_note: null, reviewed_by: null,
       deleted_at: null, deleted_by: null, created_at: now(),
     };
     await db.collection(C.documents).doc(id).set(doc);
   } catch (e) {
-    await blobs.delete(blobKey(u.companyId, id)).catch(() => {}); // no orphan ciphertext on failure
+    await blobs.delete(key).catch(() => {}); // no orphan ciphertext on failure
     throw e;
   }
   return { id, sha256: hash, duplicateOf: dup ? { id: dup.id, created_at: dup.created_at } : null };
@@ -85,7 +100,7 @@ export class IntegrityError extends Error { constructor() { super('Document fail
 export async function readDocument(doc: DocumentDoc): Promise<{ bytes: Buffer; mime: string; name: string; sha256: string }> {
   let plain: Buffer;
   try {
-    plain = decryptFile(await blobs.get(blobKey(doc.company_id, doc.id)), doc.id, doc);
+    plain = decryptFile(await blobs.get(doc.blob_key), doc.id, doc);
   } catch {
     throw new IntegrityError();
   }

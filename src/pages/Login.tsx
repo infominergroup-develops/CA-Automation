@@ -3,7 +3,7 @@ import { ArrowLeft, ArrowRight, Building2, Fingerprint, KeyRound, Lock, ShieldCh
 import { Link } from 'react-router-dom';
 import { useEntrance } from '../motion';
 import { api } from '../api';
-import { useAuth } from '../auth';
+import { useAuth, useClientPassword } from '../auth';
 import { InfominerLogo } from '../components/InfominerLogo';
 import { Button, ErrorText, Field, Input } from '../components/ui';
 
@@ -13,6 +13,8 @@ const TRUST = [
   { icon: Fingerprint, title: 'Complete audit trail', text: 'Every view and download is recorded in a tamper-evident log.' },
   { icon: ShieldCheck, title: 'DPDP Act, 2023', text: 'Data hosted in India and processed only with your consent.' },
 ];
+/** Replaces the one-time-code point while clients sign in with a password. */
+const PASSWORD_TRUST = { icon: KeyRound, title: 'Personal sign-in', text: 'Your own login. The account locks after repeated wrong passwords.' };
 
 /** Decorative echo of the logo mark. */
 function Mark() {
@@ -27,6 +29,7 @@ function Mark() {
 
 export function Login() {
   const { refresh } = useAuth();
+  const clientPassword = useClientPassword();
   const [mode, setMode] = useState<'client' | 'staff'>('client');
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
@@ -35,6 +38,7 @@ export function Login() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>();
   const [resendIn, setResendIn] = useState(0);
+  const needsPassword = mode === 'staff' || clientPassword;
 
   useEffect(() => {
     if (resendIn <= 0) return;
@@ -46,7 +50,7 @@ export function Login() {
     e?.preventDefault();
     setBusy(true); setError(undefined);
     try {
-      const r = await api<{ challengeId: string; sentTo: string; signedIn?: boolean }>('/auth/login', { body: mode === 'client' ? { mode, identifier } : { mode, identifier, password } });
+      const r = await api<{ challengeId: string; sentTo: string; signedIn?: boolean }>('/auth/login', { body: needsPassword ? { mode, identifier, password } : { mode, identifier } });
       // Server has OTP turned off: the password alone started the session.
       if (r.signedIn) { setPassword(''); await refresh(); return; }
       setChallenge(r);
@@ -90,7 +94,7 @@ export function Login() {
             <span data-a="line" className="block text-brand-300">secure place.</span>
           </h1>
           <ul className="mt-12 grid grid-cols-2 gap-3">
-            {TRUST.map((t) => (
+            {(clientPassword ? TRUST.map((t) => (t.icon === KeyRound ? PASSWORD_TRUST : t)) : TRUST).map((t) => (
               <li key={t.title} data-a="trust" className="rounded-2xl bg-white/[0.05] ring-1 ring-white/10 p-4">
                 <span className="grid place-items-center size-9 rounded-xl bg-white/10 mb-3"><t.icon className="size-[18px] text-brand-300" aria-hidden /></span>
                 <div className="text-sm font-semibold">{t.title}</div>
@@ -129,20 +133,22 @@ export function Login() {
                     inputMode={mode === 'client' ? 'tel' : 'email'} type={mode === 'staff' ? 'email' : 'text'}
                     placeholder={mode === 'client' ? '98765 43210' : 'name@firm.in'} />
                 </Field>
-                {mode === 'staff' && (
+                {needsPassword && (
                   <Field label="Password">
                     <Input required type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
                   </Field>
                 )}
                 <ErrorText error={error} />
-                <Button type="submit" busy={busy} trailing={ArrowRight} disabled={!identifier || (mode === 'staff' && !password)} className="w-full h-12">
-                  {mode === 'client' ? 'Send one-time code' : 'Continue'}
+                <Button type="submit" busy={busy} trailing={ArrowRight} disabled={!identifier || (needsPassword && !password)} className="w-full h-12">
+                  {mode === 'client' && !clientPassword ? 'Send one-time code' : 'Continue'}
                 </Button>
               </form>
               <p className="mt-6 text-xs text-slate-500 leading-relaxed">
                 {mode === 'client'
-                  ? "Don't have access yet? Ask your relationship manager at the firm to add your mobile number."
-                  : 'After your password, a one-time code is sent to your registered mobile.'}
+                  ? clientPassword
+                    ? 'Use the password the firm gave you. Forgotten it or no access yet? Ask your relationship manager.'
+                    : "Don't have access yet? Ask your relationship manager at the firm to add your mobile number."
+                  : clientPassword ? 'Sign in with your work email and password.' : 'After your password, a one-time code is sent to your registered mobile.'}
               </p>
             </>
           ) : (
