@@ -96,13 +96,13 @@ Check timelines (response days, breach reporting) against the DPDP Rules in forc
 
 ## Deploy to a DigitalOcean droplet (data on Google Cloud)
 
-1. Create a droplet: Ubuntu 24.04, region **Bangalore (BLR1)**, 2 GB RAM or more, SSH key login.
-2. With the `portal-run` key at `~/portal-run-key.json`, run from your Mac:
-   ```bash
-   bash scripts/deploy-droplet.sh DROPLET_IP
-   ```
-   It stops if something else already uses the web ports; otherwise it installs Docker, sends the settings, key and committed code, and starts the app behind Caddy (automatic HTTPS) at `https://<ip-with-dashes>.sslip.io`. With your own domain pointed at the droplet, add it: `bash scripts/deploy-droplet.sh DROPLET_IP portal.example.in`.
-3. Delete the key from your Mac. Run the same command again to deploy updates; the server keeps its copy of the key.
+For a droplet that already runs nginx (with certbot, webroot `/var/www/certbot`) and other sites. With the `portal-run` key at `~/portal-run-key.json`, run from your Mac:
+```bash
+bash scripts/deploy-droplet.sh DROPLET_IP
+```
+It sends the settings, key and committed code, runs the portal on `127.0.0.1:3001` (450 MB memory cap), and adds one nginx site, `zz-ca-portal`, with its own certificate at `https://portal.<ip-with-dashes>.sslip.io`. If nginx refuses the site it is undone, and the other sites are never changed. With your own domain pointed at the droplet: `bash scripts/deploy-droplet.sh DROPLET_IP portal.example.in`.
+
+Run it again to deploy updates; the server keeps its copy of the key, so delete the one on your Mac. One upload may be up to 60 MB in total. To take the portal off the droplet's web server: `rm /etc/nginx/sites-enabled/zz-ca-portal && nginx -t && systemctl reload nginx`.
 
 Run only one copy of the portal: if it is also on App Platform, destroy that app once the droplet works.
 
