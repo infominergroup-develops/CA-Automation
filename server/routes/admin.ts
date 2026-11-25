@@ -10,7 +10,11 @@ export const adminRouter = Router();
 
 /* ---------- Staff users ---------- */
 
-adminRouter.get('/users', requireRole('director', 'manager'), (req, res) => {
+adminRouter.get('/users', requireRole('director', 'manager', 'employee'), (req, res) => {
+  // Employees only need to name a client's relationship manager.
+  if (req.user!.role === 'employee') {
+    return res.json(all(`SELECT id, role, name, status FROM users WHERE role IN ('director','manager') AND status = 'active' ORDER BY role, name`));
+  }
   const rows = all<Record<string, unknown>>(
     `SELECT id, role, name, email, mobile, status, created_at FROM users
      WHERE role <> 'client' ${req.user!.role === 'manager' ? "AND status = 'active'" : ''}
@@ -99,9 +103,11 @@ function checkManager(managerId: string | undefined) {
   }
 }
 
-adminRouter.post('/clients', requireRole('director', 'manager'), (req, res) => {
+adminRouter.post('/clients', requireRole('director', 'manager', 'employee'), (req, res) => {
   const b = parse(z.object({ group_name: zText(200).min(2), company: companyFields, contact: contactFields }), req.body);
   const managerId = b.company.manager_id ?? (req.user!.role === 'manager' ? req.user!.id : undefined);
+  // Without one, no manager could see a client an employee added.
+  if (req.user!.role === 'employee' && !managerId) throw new HttpError(400, 'Choose a relationship manager.');
   checkManager(managerId);
   if (one('SELECT 1 FROM users WHERE mobile = ? OR (email IS NOT NULL AND email = ?)', [b.contact.mobile, b.contact.email ?? ''])) {
     throw new HttpError(409, 'A user with this mobile or email already exists.');

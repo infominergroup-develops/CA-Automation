@@ -23,12 +23,16 @@ const duplicate = (e: unknown, msg: string) => { if (e instanceof UniquenessErro
 
 /* ---------- Staff users ---------- */
 
-adminRouter.get('/users', requireRole('director', 'manager'), h(async (req, res) => {
+adminRouter.get('/users', requireRole('director', 'manager', 'employee'), h(async (req, res) => {
   const ROLE_ORDER = ['director', 'employee', 'manager']; // alphabetical, as the SQLite build sorts
   const rows = (await query<UserDoc>(C.users))
-    .filter((u) => u.role !== 'client' && (req.user!.role !== 'manager' || u.status === 'active'))
+    .filter((u) => u.role !== 'client' && (req.user!.role === 'director' || u.status === 'active'))
     .sort((a, b) => ROLE_ORDER.indexOf(a.role) - ROLE_ORDER.indexOf(b.role) || a.name.localeCompare(b.name))
     .map(({ id, role, name, email, mobile, status, created_at }) => ({ id, role, name, email, mobile, status, created_at }));
+  // Employees only need to name a client's relationship manager.
+  if (req.user!.role === 'employee') {
+    return res.json(rows.filter((u) => u.role !== 'employee').map(({ id, role, name, status }) => ({ id, role, name, status })));
+  }
   res.json(rows);
 }));
 
@@ -136,9 +140,11 @@ const companyDoc = (id: string, groupId: string, b: z.infer<typeof companyFields
   tally_name: b.tally_name ?? null, manager_id: managerId ?? null, created_at: now(), created_by: by,
 });
 
-adminRouter.post('/clients', requireRole('director', 'manager'), h(async (req, res) => {
+adminRouter.post('/clients', requireRole('director', 'manager', 'employee'), h(async (req, res) => {
   const b = parse(z.object({ group_name: zText(200).min(2), company: companyFields, contact: contactFields }), req.body);
   const managerId = b.company.manager_id ?? (req.user!.role === 'manager' ? req.user!.id : undefined);
+  // Without one, no manager could see a client an employee added.
+  if (req.user!.role === 'employee' && !managerId) throw new HttpError(400, 'Choose a relationship manager.');
   await checkManager(managerId);
   await checkFolderName(b.company.legal_name);
   const password = clientPassword(b.contact.password);

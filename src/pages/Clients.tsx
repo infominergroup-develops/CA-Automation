@@ -19,6 +19,7 @@ export interface StaffUser { id: string; role: string; name: string; email: stri
 
 export function Clients() {
   const u = useUser();
+  const employee = u.role === 'employee';
   const [params, setParams] = useSearchParams();
   const [rows, err, reload, loading] = useLoad(() => api<Company[]>('/companies'));
   const adding = params.get('new') === '1';
@@ -27,7 +28,7 @@ export function Clients() {
   const shown = rows?.filter((c) => `${c.legal_name} ${c.group_name} ${c.gstin ?? ''} ${c.pan ?? ''}`.toLowerCase().includes(q.toLowerCase()));
   return (
     <>
-      <PageHeader title="Clients" subtitle={u.role === 'manager' ? 'Clients you manage or have tasks for.' : 'Every client company of the firm.'}
+      <PageHeader title="Clients" subtitle={employee ? 'Clients you added or have an open task for.' : u.role === 'manager' ? 'Clients you manage or have tasks for.' : 'Every client company of the firm.'}
         actions={<Button icon={Plus} onClick={() => setAdding(true)}>New client</Button>} />
       <Card padded={false} title={`${rows?.length ?? '–'} companies`} actions={
         <div className="relative">
@@ -42,7 +43,7 @@ export function Clients() {
         ) : (
           <>
             <div className="hidden md:block">
-              <Table head={['Company', 'GSTIN', 'Manager', 'Open tasks', 'Docs to check', '']}>
+              <Table head={['Company', 'GSTIN', ...(employee ? [] : ['Manager', 'Open tasks', 'Docs to check']), '']}>
                 {shown.map((c) => (
                   <tr key={c.id} className="hover:bg-slate-50/70 transition-colors">
                     <Td>
@@ -50,9 +51,13 @@ export function Clients() {
                       <div className="text-xs text-slate-500">{c.group_name}</div>
                     </Td>
                     <Td className="font-mono text-xs text-slate-600">{c.gstin ?? '—'}</Td>
-                    <Td>{c.manager_name ?? <span className="text-slate-400">Unassigned</span>}</Td>
-                    <Td className="tabular-nums">{c.open_tasks}</Td>
-                    <Td>{c.pending_docs ? <Badge tone="amber" dot>{c.pending_docs} pending</Badge> : <span className="text-slate-400">—</span>}</Td>
+                    {!employee && (
+                      <>
+                        <Td>{c.manager_name ?? <span className="text-slate-400">Unassigned</span>}</Td>
+                        <Td className="tabular-nums">{c.open_tasks}</Td>
+                        <Td>{c.pending_docs ? <Badge tone="amber" dot>{c.pending_docs} pending</Badge> : <span className="text-slate-400">—</span>}</Td>
+                      </>
+                    )}
                     <Td className="text-right"><Link to={`/company/${c.id}`} aria-label={`Open ${c.legal_name}`} className="inline-grid place-items-center size-8 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-ink"><ChevronRight className="size-4" /></Link></Td>
                   </tr>
                 ))}
@@ -64,7 +69,7 @@ export function Clients() {
                   <Link to={`/company/${c.id}`} className="flex items-center gap-3 px-5 py-3.5">
                     <span className="min-w-0 flex-1">
                       <span className="block font-semibold text-ink truncate">{c.legal_name}</span>
-                      <span className="block text-xs text-slate-500">{c.open_tasks} open tasks · {c.manager_name ?? 'Unassigned'}</span>
+                      <span className="block text-xs text-slate-500">{employee ? c.group_name : `${c.open_tasks} open tasks · ${c.manager_name ?? 'Unassigned'}`}</span>
                     </span>
                     {!!c.pending_docs && <Badge tone="amber" dot>{c.pending_docs}</Badge>}
                     <ChevronRight className="size-4 text-slate-300" aria-hidden />
@@ -105,7 +110,7 @@ function NewClient({ onClose, onDone }: { onClose: () => void; onDone: () => voi
   };
   return (
     <Modal title="New client" description="Creates the company and a login for the client contact." onClose={onClose} wide
-      footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button busy={busy} onClick={save} disabled={!f.legal_name || !f.name || !f.mobile || !f.email || (clientPassword && !f.password)}>Create client</Button></>}>
+      footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button busy={busy} onClick={save} disabled={!f.legal_name || !f.name || !f.mobile || !f.email || (clientPassword && !f.password) || (u.role === 'employee' && !f.manager_id)}>Create client</Button></>}>
       <div className="space-y-6">
         <fieldset>
           <legend className="text-[13px] font-semibold uppercase tracking-wide text-slate-500 mb-3">Company</legend>
@@ -115,7 +120,7 @@ function NewClient({ onClose, onDone }: { onClose: () => void; onDone: () => voi
             <Field label="PAN" optional><Input value={f.pan} onChange={set('pan')} maxLength={10} className="uppercase font-mono" placeholder="AAAAA9999A" /></Field>
             <Field label="GSTIN" optional><Input value={f.gstin} onChange={set('gstin')} maxLength={15} className="uppercase font-mono" placeholder="09AAAAA9999A1Z5" /></Field>
             <Field label="Name in Tally" optional hint="Used to match the Tally sync later"><Input value={f.tally_name} onChange={set('tally_name')} /></Field>
-            {u.role === 'director' && (
+            {u.role !== 'manager' && (
               <Field label="Relationship manager">
                 <Select value={f.manager_id} onChange={set('manager_id')}>
                   <option value="">Choose…</option>
@@ -167,7 +172,7 @@ function StaffCompany() {
   if (!c) return <LoadingRows rows={6} />;
   return (
     <>
-      <PageHeader back={managerial ? { to: '/clients', label: 'Clients' } : { to: '/tasks', label: 'My tasks' }}
+      <PageHeader back={{ to: '/clients', label: 'Clients' }}
         title={<span className="flex items-center gap-3"><span className="grid place-items-center size-11 rounded-xl bg-brand-50 text-brand-700 shrink-0"><Building2 className="size-5" aria-hidden /></span>{c.legal_name}</span>}
         subtitle={
           <span className="flex flex-wrap gap-2 mt-1">

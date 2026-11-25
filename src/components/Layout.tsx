@@ -18,7 +18,7 @@ const NAV: { group: string; items: NavItem[] }[] = [
     items: [
       { to: '/', label: 'Dashboard', icon: LayoutDashboard, roles: ['director', 'manager', 'employee'] },
       { to: '/', label: 'Home', icon: LayoutDashboard, roles: ['client'] },
-      { to: '/clients', label: 'Clients', icon: Building2, roles: ['director', 'manager'] },
+      { to: '/clients', label: 'Clients', icon: Building2, roles: ['director', 'manager', 'employee'] },
       { to: '/tasks', label: 'Tasks', icon: ListChecks, roles: ['director', 'manager', 'employee'] },
       { to: '/review', label: 'Review', icon: ClipboardCheck, roles: ['director', 'manager'], badge: 'review' },
       { to: '/reports', label: 'Reports', icon: BarChart3, roles: ['client'] },

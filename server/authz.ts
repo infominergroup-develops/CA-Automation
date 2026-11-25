@@ -20,7 +20,8 @@ export function companyScope(u: SessionUser): string[] | null {
         [u.id, u.id, u.id]).map((r) => r.id);
     case 'employee':
       return all<{ company_id: string }>(
-        `SELECT DISTINCT company_id FROM tasks WHERE assignee_id = ? AND ${OPEN_TASK}`, [u.id]).map((r) => r.company_id);
+        `SELECT company_id FROM tasks WHERE assignee_id = ? AND ${OPEN_TASK}
+         UNION SELECT id FROM companies WHERE created_by = ?`, [u.id, u.id]).map((r) => r.company_id);
     case 'client':
       return all<{ id: string }>('SELECT id FROM companies WHERE group_id = ?', [u.client_group_id ?? '']).map((r) => r.id);
   }
@@ -48,8 +49,9 @@ export function employeeCategories(employeeId: string, companyId: string): Set<n
   return new Set(rows.flatMap((r) => JSON.parse(r.category_ids) as number[]));
 }
 
-export function canViewDocument(u: SessionUser, doc: { company_id: string; category_id: number }): boolean {
-  if (u.role === 'employee') return employeeCategories(u.id, doc.company_id).has(doc.category_id);
+/** Employees see document types granted to them, and their own uploads while the company is in their scope. */
+export function canViewDocument(u: SessionUser, doc: { company_id: string; category_id: number; uploaded_by: string }): boolean {
+  if (u.role === 'employee' && doc.uploaded_by !== u.id) return employeeCategories(u.id, doc.company_id).has(doc.category_id);
   return inScope(u, doc.company_id);
 }
 

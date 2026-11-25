@@ -31,8 +31,11 @@ async function computeScope(u: SessionUser): Promise<string[] | null> {
       return [...new Set([...own.map((c) => c.id), ...reviewing.map((t) => t.company_id), ...created.map((t) => t.company_id)])];
     }
     case 'employee': {
-      const tasks = await query<TaskDoc>(C.tasks, { where: [['assignee_id', '==', u.id]] });
-      return [...new Set(tasks.filter((t) => OPEN_STATUSES.includes(t.status)).map((t) => t.company_id))];
+      const [tasks, added] = await Promise.all([
+        query<TaskDoc>(C.tasks, { where: [['assignee_id', '==', u.id]] }),
+        query<CompanyDoc>(C.companies, { where: [['created_by', '==', u.id]] }),
+      ]);
+      return [...new Set([...tasks.filter((t) => OPEN_STATUSES.includes(t.status)).map((t) => t.company_id), ...added.map((c) => c.id)])];
     }
     case 'client':
       return (await query<CompanyDoc>(C.companies, { where: [['group_id', '==', u.client_group_id ?? '']] })).map((c) => c.id);
@@ -51,8 +54,9 @@ export async function assertCompany(u: SessionUser, companyId: string): Promise<
   return c;
 }
 
-export async function canViewDocument(u: SessionUser, doc: { company_id: string; category_id: string }): Promise<boolean> {
-  if (u.role === 'employee') return (await employeeCategories(u.id, doc.company_id)).has(doc.category_id);
+/** Employees see document types granted to them, and their own uploads while the company is in their scope. */
+export async function canViewDocument(u: SessionUser, doc: { company_id: string; category_id: string; uploaded_by: string }): Promise<boolean> {
+  if (u.role === 'employee' && doc.uploaded_by !== u.id) return (await employeeCategories(u.id, doc.company_id)).has(doc.category_id);
   return inScope(u, doc.company_id);
 }
 

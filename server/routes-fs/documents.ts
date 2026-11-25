@@ -33,7 +33,7 @@ documentsRouter.get('/companies/:companyId/documents', requireAuth, h(async (req
   }));
   if (req.user!.role === 'employee') {
     const allowed = await employeeCategories(req.user!.id, companyId);
-    rows = rows.filter((r) => allowed.has(r.category_id));
+    rows = rows.filter((r) => allowed.has(r.category_id) || r.uploaded_by === req.user!.id);
   }
   if (req.user!.role === 'client') {
     // Staff names stay internal.

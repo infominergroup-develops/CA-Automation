@@ -62,7 +62,7 @@ export function DocumentsPanel({ companyId, canUpload = true }: { companyId: str
     <div className="space-y-6">
       {canUpload && <UploadZone companyId={companyId} cats={cats ?? []} onDone={reload} />}
 
-      <Card title="Documents" description={u.role === 'employee' ? 'Only categories granted to you for an open task are shown.' : `${docs?.length ?? '–'} files`} padded={false}
+      <Card title="Documents" description={u.role === 'employee' ? 'Your uploads, and the document types granted to you for an open task.' : `${docs?.length ?? '–'} files`} padded={false}
         actions={
           <>
             <div className="relative">

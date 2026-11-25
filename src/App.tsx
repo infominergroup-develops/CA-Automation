@@ -42,7 +42,7 @@ export function App() {
       <Route element={<Gate />}>
         <Route path="/" element={<Dashboard />} />
         <Route path="/company/:id" element={<CompanyPage />} />
-        <Route path="/clients" element={only(['director', 'manager'], <Clients />)} />
+        <Route path="/clients" element={only(['director', 'manager', 'employee'], <Clients />)} />
         <Route path="/tasks" element={only(['director', 'manager', 'employee'], <Tasks />)} />
         <Route path="/tasks/:id" element={only(['director', 'manager', 'employee'], <TaskDetail />)} />
         <Route path="/requests" element={only(['client'], <ClientRequests />)} />
