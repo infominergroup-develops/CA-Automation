@@ -94,6 +94,18 @@ SQLite is enough for one firm (hundreds of clients, tens of staff) on one server
 
 Check timelines (response days, breach reporting) against the DPDP Rules in force and set `dpdp_response_days` accordingly.
 
+## Deploy to a DigitalOcean droplet (data on Google Cloud)
+
+1. Create a droplet: Ubuntu 24.04, region **Bangalore (BLR1)**, 2 GB RAM or more, SSH key login.
+2. With the `portal-run` key at `~/portal-run-key.json`, run from your Mac:
+   ```bash
+   bash scripts/deploy-droplet.sh DROPLET_IP
+   ```
+   It installs Docker, opens only SSH and web ports, sends the settings, key and committed code, and starts the app behind Caddy (automatic HTTPS) at `https://<ip-with-dashes>.sslip.io`. With your own domain pointed at the droplet, add it: `bash scripts/deploy-droplet.sh DROPLET_IP portal.example.in`.
+3. Delete the key from your Mac. Run the same command again to deploy updates; the server keeps its copy of the key.
+
+Run only one copy of the portal: if it is also on App Platform, destroy that app once the droplet works.
+
 ## Deploy to DigitalOcean App Platform (data on Google Cloud)
 
 The app runs on DigitalOcean; all data stays in Google Cloud (Firebase Authentication for passwords, Firestore for records, the Cloud Storage bucket for encrypted documents, Secret Manager for `MASTER_KEY` / `OTP_SECRET`). App Platform builds the `Dockerfile` from GitHub, which starts the Firestore server. Nothing is kept on DigitalOcean's disk, so redeploys lose nothing.

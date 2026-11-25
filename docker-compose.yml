@@ -1,0 +1,23 @@
+# One server (DigitalOcean droplet). Started by scripts/deploy-droplet.sh, which writes the two env files.
+# Nothing is stored here: records, sign-in and documents are all in Google Cloud.
+name: portal
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: [../.env, ../key.env]
+    # no ports: only Caddy can reach the app
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports: ["80:80", "443:443", "443:443/udp"]
+    environment:
+      DOMAIN: ${DOMAIN:?run scripts/deploy-droplet.sh}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data  # HTTPS certificates
+    depends_on: [app]
+
+volumes:
+  caddy-data:
