@@ -16,7 +16,7 @@ export interface Category { id: number; name: string }
 const MONTHS = ['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar'];
 const MONTH_NUM = [4, 5, 6, 7, 8, 9, 10, 11, 12, 1, 2, 3];
 const monthName = (m: number) => MONTHS[MONTH_NUM.indexOf(m)];
-const ACCEPT = '.pdf,.jpg,.jpeg,.png,.webp,.heic,.xlsx,.xls,.docx,.csv,.zip,image/*';
+const ACCEPT = '.pdf,.jpg,.jpeg,.png,.webp,.heic,.xlsx,.xls,.docx,.doc,.csv,.zip,image/*';
 const MAX = 25e6;
 
 function FileIcon({ mime, name }: { mime: string; name?: string }) {
@@ -132,7 +132,10 @@ function UploadZone({ companyId, cats, onDone }: { companyId: string; cats: Cate
   const [err, setErr] = useState<unknown>();
   const input = useRef<HTMLInputElement>(null);
 
-  const add = (list: FileList | null) => setFiles((f) => [...f, ...[...(list ?? [])].filter((n) => !f.some((x) => x.name === n.name && x.size === n.size))].slice(0, 20));
+  const add = (list: FileList | null) => {
+    const picked = [...(list ?? [])]; // copied now: the browser empties the list before React gets round to the update
+    setFiles((f) => [...f, ...picked.filter((n) => !f.some((x) => x.name === n.name && x.size === n.size))].slice(0, 20));
+  };
   const onDrop = (e: DragEvent) => { e.preventDefault(); setDrag(false); add(e.dataTransfer.files); };
   const tooBig = files.filter((f) => f.size > MAX);
 

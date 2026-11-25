@@ -83,13 +83,14 @@ const ALLOWED: Record<string, string> = {
   xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   xls: 'application/vnd.ms-excel',
-  cfb: 'application/vnd.ms-excel',
   zip: 'application/zip',
 };
 
 export async function detectType(buf: Buffer, name: string): Promise<string | null> {
   const t = await fileTypeFromBuffer(buf);
   if (t && ALLOWED[t.ext]) return ALLOWED[t.ext];
+  // Old Word and Excel share one container with other programs' files (and Windows installers), so the name decides.
+  if (t?.ext === 'cfb') return /\.doc$/i.test(name) ? 'application/msword' : /\.xls$/i.test(name) ? 'application/vnd.ms-excel' : null;
   // CSV and plain text have no signature: accept only by extension, and only if the bytes are text.
   if (!t && /\.(csv|txt)$/i.test(name) && !buf.subarray(0, 8192).includes(0)) {
     return name.toLowerCase().endsWith('.csv') ? 'text/csv' : 'text/plain';

@@ -10,6 +10,7 @@ import {
   reviewDocument, softDeleteDocument, findDuplicate, IntegrityError, DEFAULT_CATEGORIES,
 } from '../server/firestore/documents.ts';
 import { blobs } from '../server/firestore/storage.ts';
+import { detectType } from '../server/shared.ts';
 import { C } from '../server/firestore/types.ts';
 
 let pass = 0, fail = 0;
@@ -39,6 +40,15 @@ check('stored in client / year / document-type folder', key.startsWith('Mehta Tr
 check('folder names cannot escape or add levels', docFolder('../evil/A', '2026-27', '..') === '__evil_A/2026-27/_');
 const stored = await blobs.get(key);
 check('stored bytes are ciphertext (not the plaintext)', !stored.includes(Buffer.from('%PDF')) && !stored.equals(plain));
+
+// --- File types (decided from the bytes; old Office files by name too, as they share a container)
+const cfb = Buffer.concat([Buffer.from('D0CF11E0A1B11AE1', 'hex'), Buffer.alloc(512)]);
+const types: [string, Buffer, string | null][] = [
+  ['a.pdf', plain, 'application/pdf'], ['a.png', Buffer.from('89504E470D0A1A0A0000000D4948445200000001000000010806000000', 'hex'), 'image/png'],
+  ['a.jpeg', Buffer.from('FFD8FFE000104A46494600010100', 'hex'), 'image/jpeg'], ['old.DOC', cfb, 'application/msword'], ['old.xls', cfb, 'application/vnd.ms-excel'],
+  ['setup.msi', cfb, null], ['mail.msg', cfb, null], ['fake.pdf', Buffer.from('MZ\x90\x00'), null],
+];
+for (const [name, bytes, want] of types) check(`type of ${name}: ${want ?? 'refused'}`, await detectType(bytes, name) === want, await detectType(bytes, name));
 
 // --- List hides crypto fields
 const list = await listDocuments(COMPANY);
