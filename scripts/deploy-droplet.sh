@@ -14,10 +14,14 @@ PROJECT_ID="infominer-dev-fdbfa"
 KEY="${KEY:-$HOME/portal-run-key.json}"
 remote() { ssh -o StrictHostKeyChecking=accept-new "root@$IP" "$@"; }
 
-echo "== 1. Prepare the server (Docker, firewall: only SSH and web) =="
+echo "== 1. Prepare the server =="
+# Before changing anything: the web ports must be free, or already held by this portal.
+TAKEN=$(remote 'docker ps --format "{{.Names}}" 2>/dev/null | grep -qx portal-caddy-1 || ss -Hltnp "( sport = :80 or sport = :443 )"')
+[ -z "$TAKEN" ] || { printf 'Stopped, nothing changed: something else on this server already uses the web ports:\n%s\n' "$TAKEN"; exit 1; }
+# Rules only matter if a firewall is already on; switching one on could cut off other services on the server.
 remote 'set -e; export DEBIAN_FRONTEND=noninteractive
   docker compose version >/dev/null 2>&1 || { apt-get update -q && apt-get install -y -q docker.io docker-compose-v2; }
-  ufw allow OpenSSH >/dev/null; ufw allow 80/tcp >/dev/null; ufw allow 443 >/dev/null; ufw --force enable >/dev/null
+  if command -v ufw >/dev/null; then ufw allow 80/tcp >/dev/null; ufw allow 443 >/dev/null; fi
   mkdir -p /opt/portal && chmod 700 /opt/portal'
 
 echo "== 2. Settings and Google key =="

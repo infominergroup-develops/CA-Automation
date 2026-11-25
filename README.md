@@ -101,7 +101,7 @@ Check timelines (response days, breach reporting) against the DPDP Rules in forc
    ```bash
    bash scripts/deploy-droplet.sh DROPLET_IP
    ```
-   It installs Docker, opens only SSH and web ports, sends the settings, key and committed code, and starts the app behind Caddy (automatic HTTPS) at `https://<ip-with-dashes>.sslip.io`. With your own domain pointed at the droplet, add it: `bash scripts/deploy-droplet.sh DROPLET_IP portal.example.in`.
+   It stops if something else already uses the web ports; otherwise it installs Docker, sends the settings, key and committed code, and starts the app behind Caddy (automatic HTTPS) at `https://<ip-with-dashes>.sslip.io`. With your own domain pointed at the droplet, add it: `bash scripts/deploy-droplet.sh DROPLET_IP portal.example.in`.
 3. Delete the key from your Mac. Run the same command again to deploy updates; the server keeps its copy of the key.
 
 Run only one copy of the portal: if it is also on App Platform, destroy that app once the droplet works.
