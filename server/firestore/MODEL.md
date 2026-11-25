@@ -8,7 +8,7 @@ Dates stay ISO-8601 strings (they sort correctly and all existing date logic kee
 
 | Collection | From table | Key queries | Notes |
 |---|---|---|---|
-| `users` | users | by email, mobile (login); by role; by client_group_id | password_hash, status, lockout fields |
+| `users` | users | by email, mobile (login); by role; by client_group_id | status, lockout fields; passwords are in Firebase Authentication (uid = document id) |
 | `unique_user_email` / `unique_user_mobile` | — | — | uniqueness lookups (see below) |
 | `client_groups` | client_groups | — | |
 | `companies` | companies | by group_id, manager_id, gstin | |

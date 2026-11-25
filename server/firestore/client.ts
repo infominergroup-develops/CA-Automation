@@ -5,7 +5,7 @@ import { Firestore } from '@google-cloud/firestore';
  * the environment. For local development and tests, set FIRESTORE_EMULATOR_HOST (the emulator needs no
  * credentials) — see `npm run emulator`.
  */
-const projectId = process.env.GOOGLE_CLOUD_PROJECT ?? process.env.GCLOUD_PROJECT ?? 'demo-infominer';
+export const projectId = process.env.GOOGLE_CLOUD_PROJECT ?? process.env.GCLOUD_PROJECT ?? 'demo-infominer';
 export const onEmulator = !!process.env.FIRESTORE_EMULATOR_HOST;
 
 export const db = new Firestore({

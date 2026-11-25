@@ -11,6 +11,7 @@ import { documentsRouter } from '../routes-fs/documents.ts';
 import { privacyRouter } from '../routes-fs/privacy.ts';
 import { tasksRouter } from '../routes-fs/tasks.ts';
 import { timeRouter } from '../routes-fs/time.ts';
+import { FirebaseAuthError } from './firebase-auth.ts';
 import { csrfGuard, HttpError, loadSession, requireAuth, requireConsent } from './http.ts';
 
 /**
@@ -60,6 +61,7 @@ export function createApp() {
 
   app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
     if (err instanceof HttpError) return res.status(err.status).json({ error: err.message, code: err.code });
+    if (err instanceof FirebaseAuthError && err.code === 'TOO_MANY_ATTEMPTS_TRY_LATER') return res.status(429).json({ error: 'Too many failed attempts. Try again in 15 minutes.' });
     if (err instanceof multer.MulterError) {
       const msg = err.code === 'LIMIT_FILE_SIZE' ? 'A file is larger than 25 MB.' : 'Upload rejected.';
       return res.status(413).json({ error: msg });

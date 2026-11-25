@@ -8,7 +8,7 @@ import { C } from './types.ts';
 export const DEFAULT_CATEGORIES = [
   'Bank statements', 'Sales invoices', 'Purchase bills', 'Expense bills', 'GST documents',
   'TDS / TCS', 'Payroll and PF/ESI', 'Fixed assets', 'Loans', 'Investments', 'Income tax',
-  'ROC / MCA', 'KYC', 'Others',
+  'ROC / MCA', 'KYC', 'Others', 'Profit and loss', 'Balance sheet',
 ];
 const slug = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 
@@ -17,7 +17,7 @@ export interface DocumentDoc {
   id: string; company_id: string; category_id: string; fy: string; month: number | null;
   original_name: string; mime: string; size: number; sha256: string;
   wrapped_key: string; iv: string; auth_tag: string;
-  /** Where the ciphertext lives in the bucket, e.g. `Mehta Group/Mehta Traders/2025-26/Bank statements/2026-04-15_April.pdf.<id>.enc`. */
+  /** Where the ciphertext lives in the bucket, e.g. `Mehta Traders/2025-26/Bank statements/2026-04-15_April.pdf.<id>.enc`. */
   blob_key: string;
   uploaded_by: string; review_status: 'pending' | 'accepted' | 'reupload' | 'not_needed';
   review_note: string | null; reviewed_by: string | null;
@@ -50,11 +50,11 @@ export interface UploadInput {
 }
 
 /** One safe folder name: no slashes, control characters or leading dots (so no `..`). */
-const segment = (s: string) => s.replace(/[\u0000-\u001f\u007f/\\]/g, '_').trim().replace(/^\.+/, '_').slice(0, 100) || '_';
+export const segment = (s: string) => s.replace(/[\u0000-\u001f\u007f/\\]/g, '_').trim().replace(/^\.+/, '_').slice(0, 100) || '_';
 
-/** Client group / company / financial year / category, as readable folders in the bucket. Contents stay encrypted. */
-export const docFolder = (group: string, company: string, fy: string, category: string) =>
-  [group, company, fy, category].map(segment).join('/');
+/** Client / financial year / document type, as readable folders in the bucket. Contents stay encrypted. */
+export const docFolder = (client: string, fy: string, category: string) =>
+  [client, fy, category].map(segment).join('/');
 
 /** Encrypts the file, stores the ciphertext, and records metadata. Returns the id, hash and any duplicate. */
 export async function createDocument(u: UploadInput): Promise<{ id: string; sha256: string; duplicateOf: { id: string; created_at: string } | null }> {

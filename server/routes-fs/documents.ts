@@ -8,9 +8,7 @@ import {
   IntegrityError, createDocument, docFolder, getDocumentMeta, listCategories, listDocuments, readDocument, reviewDocument, softDeleteDocument,
 } from '../firestore/documents.ts';
 import { HttpError, auditReq, h, parse, requireAuth, requireRole } from '../firestore/http.ts';
-import { getById } from '../firestore/store.ts';
 import { employeeCategories } from '../firestore/tasks.ts';
-import { C, type ClientGroupDoc } from '../firestore/types.ts';
 
 export const documentsRouter = Router();
 
@@ -56,8 +54,7 @@ documentsRouter.post('/companies/:companyId/documents', requireAuth, upload.arra
   }), req.body);
   const category = (await listCategories()).find((c) => c.id === b.category_id);
   if (!category) throw new HttpError(400, 'Unknown category.');
-  const group = await getById<ClientGroupDoc>(C.clientGroups, company.group_id);
-  const folder = docFolder(group?.name ?? company.group_id, company.legal_name, b.fy, category.name);
+  const folder = docFolder(company.legal_name, b.fy, category.name);
   const files = (req.files as Express.Multer.File[] | undefined) ?? [];
   if (!files.length) throw new HttpError(400, 'Choose at least one file.');
 

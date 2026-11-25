@@ -23,7 +23,7 @@ await ensureSettingDefaults();
 const DIR_MOBILE = '9000000001', CLI_MOBILE = '9000000004';
 await createStaffUser({ role: 'director', name: 'Asha', email: 'asha@demo.test', mobile: DIR_MOBILE, password: 'correct horse 99' });
 await db.collection(C.clientGroups).doc('g1').set({ name: 'Demo Group' });
-const cliId = await createClientUser({ name: 'Ravi', mobile: CLI_MOBILE, clientGroupId: 'g1' });
+const cliId = await createClientUser({ name: 'Ravi', email: 'ravi@demo.test', mobile: CLI_MOBILE, clientGroupId: 'g1' });
 
 // Start the real server on a random port
 const server = createApp().listen(0);

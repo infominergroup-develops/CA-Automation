@@ -4,8 +4,8 @@
  */
 import './emulator-only.mts';
 import { db } from '../server/firestore/client.ts';
-import { verifyPassword } from '../server/security/crypto.ts';
-import { createStaffUser, createClientUser, findUserByIdentifier, getUserById, isLocked, recordLoginFailure, UniquenessError } from '../server/firestore/users.ts';
+import { checkPassword, createAccount } from '../server/firestore/firebase-auth.ts';
+import { createStaffUser, createClientUser, findUserByIdentifier, getUserById, isLocked, recordLoginFailure, setUserStatus, updatePassword, UniquenessError } from '../server/firestore/users.ts';
 import { createChallenge, verifyChallenge } from '../server/firestore/challenges.ts';
 import { createSession, loadValidSession, destroySession, endAllSessions } from '../server/firestore/sessions.ts';
 import { audit, verifyAuditChain } from '../server/firestore/audit.ts';
@@ -27,8 +27,14 @@ const dir = await createStaffUser({ role: 'director', name: 'Asha Rao', email: '
 check('staff user created', !!(await getUserById(dir)));
 check('email normalised + found by email', (await findUserByIdentifier('asha@demo.test'))?.id === dir);
 check('found by mobile (any format)', (await findUserByIdentifier('09000000001'))?.id === dir);
-check('password verifies', await verifyPassword('correct horse 99', (await getUserById(dir))!.password_hash));
-check('wrong password rejected', !(await verifyPassword('nope', (await getUserById(dir))!.password_hash)));
+const asha = (await getUserById(dir))!;
+check('password verifies', await checkPassword(asha, 'correct horse 99'));
+check('wrong password rejected', !(await checkPassword(asha, 'nope')));
+check('empty password rejected', !(await checkPassword(asha, '')));
+check('unknown user rejected', !(await checkPassword(undefined, 'correct horse 99')));
+check('no password or hash is stored in Firestore', !/hash|password/i.test(Object.keys(asha).join()));
+await createAccount('someone-else', 'self@demo.test', 'Self', 'correct horse 99');
+check('an account someone else registered with the same email is refused', !(await checkPassword({ id: 'our-user', email: 'self@demo.test' }, 'correct horse 99')));
 
 let dupEmail = false, dupMobile = false;
 try { await createStaffUser({ role: 'manager', name: 'X', email: 'asha@demo.test', mobile: '9000000099', password: 'another one 123' }); } catch (e) { dupEmail = e instanceof UniquenessError; }
@@ -36,10 +42,17 @@ try { await createStaffUser({ role: 'manager', name: 'Y', email: 'new@demo.test'
 check('duplicate email rejected atomically', dupEmail);
 check('duplicate mobile rejected atomically', dupMobile);
 check('failed creates left no partial user', (await db.collection(C.users).get()).size === 1);
+check('failed creates left no Firebase account', !!(await createAccount('reuse', 'new@demo.test', 'Reuse', 'another one 123')));
+await updatePassword(dir, 'changed horse 99');
+check('changed password: new works, old does not', await checkPassword(asha, 'changed horse 99') && !(await checkPassword(asha, 'correct horse 99')));
+await setUserStatus(dir, 'disabled');
+check('disabled account cannot sign in', !(await checkPassword(asha, 'changed horse 99')));
+await setUserStatus(dir, 'active');
+check('re-enabled account can', await checkPassword(asha, 'changed horse 99'));
 
 await db.collection(C.clientGroups).doc('g1').set({ name: 'Demo Traders Group', created_at: new Date().toISOString() });
-const cli = await createClientUser({ name: 'Ravi', mobile: '9000000004', clientGroupId: 'g1' });
-check('client user created (no password)', (await getUserById(cli))?.password_hash === null);
+const cli = await createClientUser({ name: 'Ravi', email: 'ravi@demo.test', mobile: '9000000004', clientGroupId: 'g1' });
+check('client user without a password cannot use one', !(await checkPassword((await getUserById(cli))!, 'anything at all 1')));
 
 // --- One-time code flow
 const ch = await createChallenge(dir, '1.2.3.4');

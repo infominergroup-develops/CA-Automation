@@ -2,14 +2,15 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { config } from '../config.ts';
 import { zEmail, zGstin, zId, zMobile, zPan, zText } from '../shared.ts';
-import { passwordProblem, verifyPassword } from '../security/crypto.ts';
+import { passwordProblem } from '../security/crypto.ts';
 import { assertCompany, companyScope, userNames } from '../firestore/authz.ts';
 import { db } from '../firestore/client.ts';
 import { HttpError, auditReq, h, parse, requireAuth, requireRole, type SessionUser } from '../firestore/http.ts';
 import { endAllSessions } from '../firestore/sessions.ts';
 import { getSettings, setSetting } from '../firestore/settings.ts';
 import { getById, newId, now, query } from '../firestore/store.ts';
-import { listCategories, type DocumentDoc } from '../firestore/documents.ts';
+import { listCategories, segment, type DocumentDoc } from '../firestore/documents.ts';
+import { checkPassword } from '../firestore/firebase-auth.ts';
 import {
   UniquenessError, ackMonitoringNotice, createClientUser, createStaffUser, getUserById, setUserStatus, updatePassword,
 } from '../firestore/users.ts';
@@ -70,8 +71,7 @@ adminRouter.patch('/users/:id/status', requireRole('director'), h(async (req, re
 adminRouter.post('/me/password', requireAuth, h(async (req, res) => {
   const b = parse(z.object({ current: z.string().max(200), next: z.string().max(200) }), req.body);
   if (req.user!.role === 'client') throw new HttpError(400, 'Clients sign in with a one-time code.');
-  const u = await getUserById(req.user!.id);
-  if (!(await verifyPassword(b.current, u?.password_hash))) throw new HttpError(400, 'Current password is incorrect.');
+  if (!(await checkPassword(req.user, b.current))) throw new HttpError(400, 'Current password is incorrect.');
   const problem = passwordProblem(b.next);
   if (problem) throw new HttpError(400, problem);
   await updatePassword(req.user!.id, b.next);
@@ -97,7 +97,17 @@ const companyFields = z.object({
   tally_name: zText(200).optional(),
   manager_id: zId.optional(),
 });
-const contactFields = z.object({ name: zText(120).min(2), mobile: zMobile, email: optional(zEmail), password: z.string().max(200).optional() });
+// Firebase accounts are email-based, so every login needs one.
+const contactFields = z.object({ name: zText(120).min(2), mobile: zMobile, email: zEmail, password: z.string().max(200).optional() });
+
+/** Each client's files live in a bucket folder named after it, so two clients may not share a folder name. */
+// shortcut: check-then-write, so two simultaneous creates could both pass; reserve the name in a transaction if that ever matters.
+async function checkFolderName(legalName: string) {
+  const folder = segment(legalName).toLowerCase();
+  if ((await query<CompanyDoc>(C.companies)).some((c) => segment(c.legal_name).toLowerCase() === folder)) {
+    throw new HttpError(409, 'Another client already has this name. Add something to tell them apart, such as the city.');
+  }
+}
 
 /** While OTP is off a client signs in with the password the firm sets, so it is required and must be strong. */
 function clientPassword(pw: string | undefined): string | undefined {
@@ -130,6 +140,7 @@ adminRouter.post('/clients', requireRole('director', 'manager'), h(async (req, r
   const b = parse(z.object({ group_name: zText(200).min(2), company: companyFields, contact: contactFields }), req.body);
   const managerId = b.company.manager_id ?? (req.user!.role === 'manager' ? req.user!.id : undefined);
   await checkManager(managerId);
+  await checkFolderName(b.company.legal_name);
   const password = clientPassword(b.contact.password);
   const groupId = newId(), companyId = newId();
   // The login first: it is the step that can fail on a duplicate mobile/email, before anything else is written.
@@ -153,6 +164,7 @@ adminRouter.post('/clients/:groupId/companies', requireRole('director', 'manager
   }
   const managerId = b.manager_id ?? (req.user!.role === 'manager' ? req.user!.id : undefined);
   await checkManager(managerId);
+  await checkFolderName(b.legal_name);
   const companyId = newId();
   await db.collection(C.companies).doc(companyId).set(companyDoc(companyId, group.id, b, managerId, req.user!.id));
   await auditReq(req, { action: 'company.created', objectType: 'company', objectId: companyId, companyId });

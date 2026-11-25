@@ -4,9 +4,9 @@ import { Router, type Request, type Response } from 'express';
 import { rateLimit } from 'express-rate-limit';
 import { z } from 'zod';
 import { config } from '../config.ts';
-import { verifyPassword } from '../security/crypto.ts';
 import { createChallenge, verifyChallenge } from '../firestore/challenges.ts';
 import { hasCurrentConsent } from '../firestore/consents.ts';
+import { checkPassword } from '../firestore/firebase-auth.ts';
 import { createSession, destroySession } from '../firestore/sessions.ts';
 import { getSetting } from '../firestore/settings.ts';
 import { clearLoginFailures, findUserByIdentifier, getUserById, isLocked, recordLoginFailure } from '../firestore/users.ts';
@@ -47,7 +47,7 @@ authRouter.post('/login', loginLimiter, h(async (req, res) => {
     return res.json({ challengeId, sentTo: valid ? mask(u!.mobile ?? u!.email) : mask(body.identifier) });
   }
 
-  const passwordOk = await verifyPassword(body.password ?? '', u?.password_hash);
+  const passwordOk = await checkPassword(u, body.password ?? '');
   // Staff sign in on the staff tab, clients on the client tab.
   if (!u || (u.role === 'client') !== (body.mode === 'client') || u.status !== 'active') {
     await auditReq(req, { action: 'auth.login_failed', details: { reason: 'unknown_or_inactive' } });

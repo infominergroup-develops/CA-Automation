@@ -1,6 +1,6 @@
 import { config } from '../config.ts';
-import { hashPassword } from '../security/crypto.ts';
 import { db } from './client.ts';
+import { FirebaseAuthError, createAccount, deleteAccount, setAccountDisabled, setAccountPassword } from './firebase-auth.ts';
 import { checkUnique, claimUnique, getById, newId, now, queryOne, UniquenessError } from './store.ts';
 import { C, type Role, type UserDoc } from './types.ts';
 
@@ -19,47 +19,42 @@ export async function findUserByIdentifier(identifier: string): Promise<UserDoc 
 
 export interface NewStaff { role: Exclude<Role, 'client'>; name: string; email: string; mobile: string; password: string; createdBy?: string }
 
-/** Creates a staff user, reserving email+mobile atomically so duplicates are rejected (SQLite's UNIQUE). */
-export async function createStaffUser(s: NewStaff): Promise<string> {
-  const email = s.email.trim().toLowerCase();
-  const mobile = normalizeMobile(s.mobile);
-  const passwordHash = await hashPassword(s.password);
+/**
+ * Creates the Firebase account and the user document under the same id, reserving email+mobile atomically so
+ * duplicates are rejected (SQLite's UNIQUE). If the document cannot be written, the account is removed again.
+ */
+async function createUser(u: Pick<UserDoc, 'role' | 'name' | 'client_group_id'> & { email: string; mobile: string; password?: string; createdBy?: string }): Promise<string> {
+  const email = u.email.trim().toLowerCase();
+  const mobile = normalizeMobile(u.mobile);
   const id = newId();
-  await db.runTransaction(async (t) => {
-    await checkUnique(t, C.uniqueEmail, email, id); // reads first
-    await checkUnique(t, C.uniqueMobile, mobile, id);
-    claimUnique(t, C.uniqueEmail, email, id); // then writes
-    claimUnique(t, C.uniqueMobile, mobile, id);
-    const u: UserDoc = {
-      id, role: s.role, name: s.name, email, mobile, password_hash: passwordHash, status: 'active',
-      client_group_id: null, failed_logins: 0, locked_until: null, monitoring_notice_ack_at: null,
-      created_at: now(), created_by: s.createdBy ?? null, updated_at: now(),
-    };
-    t.set(db.collection(C.users).doc(id), u);
+  await createAccount(id, email, u.name, u.password).catch((e) => {
+    throw e instanceof FirebaseAuthError && e.code === 'EMAIL_EXISTS' ? new UniquenessError(`${C.uniqueEmail}:${email}`) : e;
   });
+  try {
+    await db.runTransaction(async (t) => {
+      await checkUnique(t, C.uniqueEmail, email, id); // reads first
+      await checkUnique(t, C.uniqueMobile, mobile, id);
+      claimUnique(t, C.uniqueEmail, email, id); // then writes
+      claimUnique(t, C.uniqueMobile, mobile, id);
+      const doc: UserDoc = {
+        id, role: u.role, name: u.name, email, mobile, status: 'active',
+        client_group_id: u.client_group_id, failed_logins: 0, locked_until: null, monitoring_notice_ack_at: null,
+        created_at: now(), created_by: u.createdBy ?? null, updated_at: now(),
+      };
+      t.set(db.collection(C.users).doc(id), doc);
+    });
+  } catch (e) {
+    await deleteAccount(id).catch((err) => console.error(`Orphan Firebase account ${id}`, err));
+    throw e;
+  }
   return id;
 }
 
+export const createStaffUser = (s: NewStaff) => createUser({ ...s, client_group_id: null });
+
 /** Creates a client login under a client group. Clients sign in with OTP, or with `password` while OTP is off. */
-export async function createClientUser(c: { name: string; email?: string; mobile: string; clientGroupId: string; createdBy?: string; password?: string }): Promise<string> {
-  const email = c.email?.trim().toLowerCase() || null;
-  const passwordHash = c.password ? await hashPassword(c.password) : null;
-  const mobile = normalizeMobile(c.mobile);
-  const id = newId();
-  await db.runTransaction(async (t) => {
-    if (email) await checkUnique(t, C.uniqueEmail, email, id); // reads first
-    await checkUnique(t, C.uniqueMobile, mobile, id);
-    if (email) claimUnique(t, C.uniqueEmail, email, id); // then writes
-    claimUnique(t, C.uniqueMobile, mobile, id);
-    const u: UserDoc = {
-      id, role: 'client', name: c.name, email, mobile, password_hash: passwordHash, status: 'active',
-      client_group_id: c.clientGroupId, failed_logins: 0, locked_until: null, monitoring_notice_ack_at: null,
-      created_at: now(), created_by: c.createdBy ?? null, updated_at: now(),
-    };
-    t.set(db.collection(C.users).doc(id), u);
-  });
-  return id;
-}
+export const createClientUser = ({ clientGroupId, ...c }: { name: string; email: string; mobile: string; clientGroupId: string; createdBy?: string; password?: string }) =>
+  createUser({ ...c, role: 'client', client_group_id: clientGroupId });
 
 export const isLocked = (u: UserDoc) => !!u.locked_until && Date.parse(u.locked_until) > Date.now();
 
@@ -78,12 +73,12 @@ export async function clearLoginFailures(userId: string): Promise<void> {
   await db.collection(C.users).doc(userId).update({ failed_logins: 0, locked_until: null, updated_at: now() });
 }
 
-export async function updatePassword(userId: string, password: string): Promise<void> {
-  await db.collection(C.users).doc(userId).update({ password_hash: await hashPassword(password), updated_at: now() });
-}
+export const updatePassword = (userId: string, password: string) => setAccountPassword(userId, password);
 
+/** Our own status ends access at once; Firebase's copy follows. */
 export async function setUserStatus(userId: string, status: 'active' | 'disabled'): Promise<void> {
   await db.collection(C.users).doc(userId).update({ status, updated_at: now() });
+  await setAccountDisabled(userId, status === 'disabled');
 }
 
 export async function ackMonitoringNotice(userId: string): Promise<void> {

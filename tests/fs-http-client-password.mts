@@ -1,6 +1,6 @@
 /**
  * With OTP off (the live setting): clients sign in with a firm-set password, and uploads land in
- * client / company / FY / category folders.
+ * client / year / document-type folders.
  * Run: npm run test:fs:clientpw   (emulator on 8089; OTP_PROVIDER=off)
  */
 import './emulator-only.mts';
@@ -50,8 +50,8 @@ try {
   check('director signs in with password alone', (await dir.login('staff', 'k@firm.test', PW)).data.signedIn === true);
 
   const company = { legal_name: 'Mehta Traders Pvt Ltd' };
-  check('client without password refused', (await dir.post('/api/clients', { group_name: 'Mehta Group', company, contact: { name: 'Ravi Mehta', mobile: '9876543210' } })).status === 400);
-  check('weak client password refused', (await dir.post('/api/clients', { group_name: 'Mehta Group', company, contact: { name: 'Ravi Mehta', mobile: '9876543210', password: 'short' } })).status === 400);
+  check('client without password refused', (await dir.post('/api/clients', { group_name: 'Mehta Group', company, contact: { name: 'Ravi Mehta', mobile: '9876543210', email: 'ravi@mehta.test' } })).status === 400);
+  check('weak client password refused', (await dir.post('/api/clients', { group_name: 'Mehta Group', company, contact: { name: 'Ravi Mehta', mobile: '9876543210', email: 'ravi@mehta.test', password: 'short' } })).status === 400);
   const created = await dir.post('/api/clients', { group_name: 'Mehta Group', company, contact: { name: 'Ravi Mehta', mobile: '9876543210', email: 'ravi@mehta.test', password: 'clientpass123' } });
   check('client created with password', created.status === 201, created.data);
   const { companyId, userId } = created.data;
@@ -70,8 +70,8 @@ try {
   const up = await dir.post(`/api/companies/${companyId}/documents`, fd);
   check('upload', up.status === 201, up.data);
   const key = (await getDocumentMeta(up.data[0].id))!.blob_key;
-  check('stored as client / company / FY / category / date_name.id.enc',
-    new RegExp(`^Mehta Group/Mehta Traders Pvt Ltd/2025-26/Bank statements/\\d{4}-\\d{2}-\\d{2}_HDFC April\\.pdf\\.${up.data[0].id}\\.enc$`).test(key), key);
+  check('stored as client / year / document type / date_name.id.enc',
+    new RegExp(`^Mehta Traders Pvt Ltd/2025-26/Bank statements/\\d{4}-\\d{2}-\\d{2}_HDFC April\\.pdf\\.${up.data[0].id}\\.enc$`).test(key), key);
   check('download still works', (await dir.get(`/api/documents/${up.data[0].id}/download`)).status === 200);
 
   // Firm resets the client's password

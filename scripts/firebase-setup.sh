@@ -53,6 +53,10 @@ gcloud iam service-accounts create "$RUN_SA" --display-name="Infominer portal (C
 SA_EMAIL="${RUN_SA}@${PROJECT_ID}.iam.gserviceaccount.com"
 gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:${SA_EMAIL}" --role="roles/datastore.user"
 gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:${SA_EMAIL}" --role="roles/secretmanager.secretAccessor"
+# Sign-in accounts (Firebase Authentication): only what the server uses, not the full firebaseauth.admin role.
+gcloud iam roles create portalAuth --project="$PROJECT_ID" --title="Portal sign-in accounts" \
+  --permissions=firebaseauth.configs.get,firebaseauth.users.create,firebaseauth.users.get,firebaseauth.users.update,firebaseauth.users.delete || true
+gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:${SA_EMAIL}" --role="projects/${PROJECT_ID}/roles/portalAuth"
 gcloud storage buckets add-iam-policy-binding "gs://${DOCS_BUCKET}" --member="serviceAccount:${SA_EMAIL}" --role="roles/storage.objectAdmin"
 
 cat <<DONE

@@ -43,7 +43,8 @@ export interface UserDoc {
   name: string;
   email: string | null;
   mobile: string | null;
-  password_hash: string | null;
+  /** Left over from before Firebase Authentication; removed by scripts/move-passwords-to-firebase.ts --remove-hashes. */
+  password_hash?: string | null;
   status: 'active' | 'disabled';
   client_group_id: string | null;
   failed_logins: number;

@@ -51,7 +51,7 @@ const w2 = await withdrawConsent(cli, ['service']);
 check('withdrawing service ends portal access', w2.lostService && !(await hasCurrentConsent(cli)));
 
 // --- Export my data (right to access)
-await createDocument({ companyId: 'co-1', categoryId: 'bank-statements', fy: '2026-27', month: 9, name: 'stmt.pdf', mime: 'application/pdf', bytes: Buffer.from('%PDF data'), uploadedBy: cli, folder: 'Test Group/Test Co/2026-27/Bank statements' });
+await createDocument({ companyId: 'co-1', categoryId: 'bank-statements', fy: '2026-27', month: 9, name: 'stmt.pdf', mime: 'application/pdf', bytes: Buffer.from('%PDF data'), uploadedBy: cli, folder: 'Test Co/2026-27/Bank statements' });
 await audit({ actorId: cli, actorRole: 'client', action: 'document.uploaded', ip: '1.2.3.4' });
 const data = await exportMyData(cli) as any;
 check('export has profile without the password hash', data.profile?.mobile === '9000000004' && !('password_hash' in data.profile));

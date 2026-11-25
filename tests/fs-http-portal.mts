@@ -83,14 +83,18 @@ try {
   const client = await dir.post('/api/clients', {
     group_name: 'Mehta Group',
     company: { legal_name: 'Mehta Traders Pvt Ltd', pan: 'AAACM1234E', gstin: '09AAACM1234E1Z5', manager_id: mgrId },
-    contact: { name: 'Ravi Mehta', mobile: '98765 43210' },
+    contact: { name: 'Ravi Mehta', mobile: '98765 43210', email: 'ravi@mehta.test' },
   });
   check('client group + company + login created', client.status === 201 && client.data.companyId, client.data);
   const companyId = client.data.companyId as string, groupId = client.data.groupId as string;
-  check('duplicate client mobile 409', (await dir.post('/api/clients', { group_name: 'Dup', company: { legal_name: 'Dup Co' }, contact: { name: 'Dup', mobile: '9876543210' } })).status === 409);
+  check('duplicate client mobile 409', (await dir.post('/api/clients', { group_name: 'Dup', company: { legal_name: 'Dup Co' }, contact: { name: 'Dup', mobile: '9876543210', email: 'dup@dup.test' } })).status === 409);
+  check('client login needs an email', (await dir.post('/api/clients', { group_name: 'Dup', company: { legal_name: 'Dup Co' }, contact: { name: 'Dup', mobile: '9876500000' } })).status === 400);
+  const sameFolder = { group_name: 'Dup', company: { legal_name: ' mehta traders PVT LTD ' }, contact: { name: 'Dup', mobile: '9876500000', email: 'dup@dup.test' } };
+  check('two clients cannot share a folder name', (await dir.post('/api/clients', sameFolder)).status === 409);
+  check('nor a second company in a group', (await dir.post(`/api/clients/${groupId}/companies`, { legal_name: 'Mehta Traders Pvt Ltd' })).status === 409);
   const second = await dir.post(`/api/clients/${groupId}/companies`, { legal_name: 'Mehta Exports LLP' });
   check('second company in group', second.status === 201);
-  const other = await dir.post('/api/clients', { group_name: 'Other Group', company: { legal_name: 'Other Co' }, contact: { name: 'Olga', mobile: '9123456780' } });
+  const other = await dir.post('/api/clients', { group_name: 'Other Group', company: { legal_name: 'Other Co' }, contact: { name: 'Olga', mobile: '9123456780', email: 'olga@other.test' } });
   check('add login to group', (await dir.post(`/api/clients/${groupId}/users`, { name: 'Priya Mehta', mobile: '9988776655', email: 'priya@mehta.test' })).status === 201);
 
   const companies = await dir.get('/api/companies');
@@ -98,7 +102,7 @@ try {
   const detail = await dir.get(`/api/companies/${companyId}`);
   check('company detail + 2 contacts', detail.data.company.manager_name === 'Ambrish' && detail.data.contacts.length === 2, detail.data);
   const cats = (await dir.get('/api/categories')).data as { id: string; name: string }[];
-  check('14 categories', cats.length === 14);
+  check('16 document types, with profit and loss', cats.length === 16 && cats.some((c) => c.name === 'Profit and loss'));
   const bank = cats.find((c) => c.name === 'Bank statements')!.id, gst = cats.find((c) => c.name === 'GST documents')!.id;
 
   check('settings readable', (await dir.get('/api/settings')).data.firm_name === 'Infominer');

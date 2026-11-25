@@ -105,7 +105,7 @@ function NewClient({ onClose, onDone }: { onClose: () => void; onDone: () => voi
   };
   return (
     <Modal title="New client" description="Creates the company and a login for the client contact." onClose={onClose} wide
-      footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button busy={busy} onClick={save} disabled={!f.legal_name || !f.name || !f.mobile || (clientPassword && !f.password)}>Create client</Button></>}>
+      footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button busy={busy} onClick={save} disabled={!f.legal_name || !f.name || !f.mobile || !f.email || (clientPassword && !f.password)}>Create client</Button></>}>
       <div className="space-y-6">
         <fieldset>
           <legend className="text-[13px] font-semibold uppercase tracking-wide text-slate-500 mb-3">Company</legend>
@@ -130,7 +130,7 @@ function NewClient({ onClose, onDone }: { onClose: () => void; onDone: () => voi
           <div className="grid sm:grid-cols-3 gap-4">
             <Field label="Contact name"><Input value={f.name} onChange={set('name')} /></Field>
             <Field label="Mobile" hint={clientPassword ? 'Signs in with this mobile or the email' : 'Signs in with a one-time code'}><Input value={f.mobile} onChange={set('mobile')} inputMode="tel" placeholder="98765 43210" /></Field>
-            <Field label="Email" optional><Input value={f.email} onChange={set('email')} type="email" /></Field>
+            <Field label="Email"><Input value={f.email} onChange={set('email')} type="email" /></Field>
             {clientPassword && <Field label="Password" hint="At least 12 characters, letters and numbers. Share it with the client privately."><Input value={f.password} onChange={set('password')} type="password" autoComplete="new-password" /></Field>}
           </div>
         </fieldset>
@@ -241,11 +241,11 @@ function AddContact({ groupId, onClose, onDone }: { groupId: string; onClose: ()
   };
   return (
     <Modal title="Add client login" description="This person will see every company in the client group." onClose={onClose}
-      footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button busy={busy} onClick={save} disabled={!f.name || !f.mobile || (clientPassword && !f.password)}>Add login</Button></>}>
+      footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button busy={busy} onClick={save} disabled={!f.name || !f.mobile || !f.email || (clientPassword && !f.password)}>Add login</Button></>}>
       <div className="space-y-4">
         <Field label="Name"><Input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
         <Field label="Mobile" hint={clientPassword ? 'Signs in with this mobile or the email' : 'Receives the one-time sign-in code'}><Input value={f.mobile} onChange={(e) => setF({ ...f, mobile: e.target.value })} inputMode="tel" /></Field>
-        <Field label="Email" optional><Input value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} type="email" /></Field>
+        <Field label="Email"><Input value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} type="email" /></Field>
         {clientPassword && <Field label="Password" hint="At least 12 characters, letters and numbers. Share it with the client privately."><Input value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} type="password" autoComplete="new-password" /></Field>}
         <ErrorText error={err} />
       </div>

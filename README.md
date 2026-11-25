@@ -96,9 +96,9 @@ Check timelines (response days, breach reporting) against the DPDP Rules in forc
 
 ## Deploy to DigitalOcean App Platform (data on Google Cloud)
 
-The app runs on DigitalOcean; all data stays in Google Cloud (Firestore for records and sign-in, the Cloud Storage bucket for encrypted documents, Secret Manager for `MASTER_KEY` / `OTP_SECRET`). App Platform builds the `Dockerfile` from GitHub, which starts the Firestore server. Nothing is kept on DigitalOcean's disk, so redeploys lose nothing.
+The app runs on DigitalOcean; all data stays in Google Cloud (Firebase Authentication for passwords, Firestore for records, the Cloud Storage bucket for encrypted documents, Secret Manager for `MASTER_KEY` / `OTP_SECRET`). App Platform builds the `Dockerfile` from GitHub, which starts the Firestore server. Nothing is kept on DigitalOcean's disk, so redeploys lose nothing.
 
-1. **Create a key for the `portal-run` service account** (it can only use Firestore, the documents bucket and the secret). On your Mac:
+1. **Create a key for the `portal-run` service account** (it can only use Firestore, sign-in accounts, the documents bucket and the secret). On your Mac:
    ```bash
    gcloud iam service-accounts keys create ~/portal-run-key.json --iam-account=portal-run@infominer-dev-fdbfa.iam.gserviceaccount.com --project=infominer-dev-fdbfa
    ```
@@ -128,7 +128,11 @@ To rotate the key: create a new one (step 1), update the variable, then delete t
 
 Production runs the Firestore server (`server/index-fs.ts`) on Cloud Run in Mumbai. Data lives in Firestore, encrypted document files in the Cloud Storage bucket, and `MASTER_KEY` / `OTP_SECRET` in Secret Manager (`infominer-secrets`), so the server keeps nothing on its own disk. Tally sync and reports are not on Firestore yet; the app hides them there.
 
-One-time setup (already done for `infominer-dev-fdbfa`): `scripts/firebase-setup.sh`.
+One-time setup: `scripts/firebase-setup.sh`. On `infominer-dev-fdbfa` it has been run except for the backup lines (as of 2026-11-25 point-in-time recovery and daily backups are off) and the `portalAuth` role.
+
+Moving passwords from Firestore to Firebase Authentication (once per project, before deploying a version that uses it): `scripts/move-passwords-to-firebase.ts`.
+
+Documents are stored as `Client / Financial year / Document type / date_name.<id>.enc`. The folders appear when the first file is uploaded; contents stay encrypted.
 
 Deploy or update:
 ```bash
@@ -141,7 +145,7 @@ Test the Firestore server locally against the emulator (never the real project; 
 npm run emulator
 ```
 ```bash
-FIRESTORE_EMULATOR_HOST=127.0.0.1:8089 GOOGLE_CLOUD_PROJECT=demo-infominer DOCS_BUCKET= OTP_PROVIDER=file DATA_DIR=./.test-data/fs npm run test:fs:portal
+FIRESTORE_EMULATOR_HOST=127.0.0.1:8089 FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099 GOOGLE_CLOUD_PROJECT=demo-infominer DOCS_BUCKET= OTP_PROVIDER=file DATA_DIR=./.test-data/fs npm run test:fs:portal
 ```
 
 ## Before go-live checklist

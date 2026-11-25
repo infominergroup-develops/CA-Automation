@@ -12,7 +12,7 @@ db.exec(fs.readFileSync(new URL('./schema-tally.sql', import.meta.url), 'utf8'))
 export const DEFAULT_CATEGORIES = [
   'Bank statements', 'Sales invoices', 'Purchase bills', 'Expense bills', 'GST documents',
   'TDS / TCS', 'Payroll and PF/ESI', 'Fixed assets', 'Loans', 'Investments', 'Income tax',
-  'ROC / MCA', 'KYC', 'Others',
+  'ROC / MCA', 'KYC', 'Others', 'Profit and loss', 'Balance sheet',
 ];
 {
   const insert = db.prepare('INSERT OR IGNORE INTO document_categories (name, sort) VALUES (?, ?)');

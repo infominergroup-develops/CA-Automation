@@ -29,14 +29,14 @@ check('category has a stable slug id', bank === 'bank-statements');
 // --- Upload
 const COMPANY = 'co-demo-1';
 const plain = Buffer.from('%PDF-1.4\nHDFC Bank statement September 2026\n%%EOF\n');
-const folder = docFolder('Mehta Group', 'Mehta Traders Pvt Ltd', '2026-27', 'Bank statements');
+const folder = docFolder('Mehta Traders Pvt Ltd', '2026-27', 'Bank statements');
 const up = await createDocument({ companyId: COMPANY, categoryId: bank, fy: '2026-27', month: 9, name: 'HDFC Sep.pdf', mime: 'application/pdf', bytes: plain, uploadedBy: 'u-client', folder });
 check('upload returns id + hash', !!up.id && up.sha256.length === 64 && up.duplicateOf === null);
 
 // --- Encrypted at rest
 const key = (await getDocumentMeta(up.id))!.blob_key;
-check('stored in client / company / FY / category folder', key.startsWith('Mehta Group/Mehta Traders Pvt Ltd/2026-27/Bank statements/') && key.endsWith(`_HDFC Sep.pdf.${up.id}.enc`), key);
-check('folder names cannot escape or add levels', docFolder('../evil', 'A/B', '2026-27', '..') === '__evil/A_B/2026-27/_');
+check('stored in client / year / document-type folder', key.startsWith('Mehta Traders Pvt Ltd/2026-27/Bank statements/') && key.endsWith(`_HDFC Sep.pdf.${up.id}.enc`), key);
+check('folder names cannot escape or add levels', docFolder('../evil/A', '2026-27', '..') === '__evil_A/2026-27/_');
 const stored = await blobs.get(key);
 check('stored bytes are ciphertext (not the plaintext)', !stored.includes(Buffer.from('%PDF')) && !stored.equals(plain));
 
@@ -58,7 +58,7 @@ check('identical file flagged as duplicate', dup.duplicateOf?.id === up.id);
 check('findDuplicate matches by company + hash', (await findDuplicate(COMPANY, up.sha256))?.id !== undefined);
 
 // --- Category / FY filter
-await createDocument({ companyId: COMPANY, categoryId: purchase, fy: '2025-26', month: null, name: 'bill.pdf', mime: 'application/pdf', bytes: Buffer.from('%PDF bill'), uploadedBy: 'u-client', folder: docFolder('Mehta Group', 'Mehta Traders Pvt Ltd', '2025-26', 'Purchase bills') });
+await createDocument({ companyId: COMPANY, categoryId: purchase, fy: '2025-26', month: null, name: 'bill.pdf', mime: 'application/pdf', bytes: Buffer.from('%PDF bill'), uploadedBy: 'u-client', folder: docFolder('Mehta Traders Pvt Ltd', '2025-26', 'Purchase bills') });
 check('filter by category', (await listDocuments(COMPANY, { categoryId: purchase })).length === 1);
 check('filter by financial year', (await listDocuments(COMPANY, { fy: '2026-27' })).length === 2);
 

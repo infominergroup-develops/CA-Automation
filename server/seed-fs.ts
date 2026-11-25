@@ -44,7 +44,7 @@ if (demo) {
   await staff('employee', 'Demo Employee', 'employee@demo.test', '9000000003');
   const groupId = newId();
   await db.collection(C.clientGroups).doc(groupId).set({ name: 'Demo Traders Group', created_at: now() });
-  await createClientUser({ name: 'Demo Client', mobile: '9000000004', clientGroupId: groupId });
+  await createClientUser({ name: 'Demo Client', email: 'client@demo.test', mobile: '9000000004', clientGroupId: groupId });
   lines.push('client    mobile 9000000004  (one-time code is delivered by the configured provider)');
 }
 
