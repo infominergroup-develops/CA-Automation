@@ -45,7 +45,7 @@ documentsRouter.get('/companies/:companyId/documents', requireAuth, (req, res) =
      FROM documents d JOIN document_categories c ON c.id = d.category_id JOIN users u ON u.id = d.uploaded_by
      WHERE d.company_id = ? AND d.deleted_at IS NULL
        AND (? IS NULL OR d.category_id = ?) AND (? IS NULL OR d.fy = ?)
-     ORDER BY d.created_at DESC LIMIT 500`,
+     ORDER BY d.created_at DESC LIMIT 5000`,
     [companyId, q.category_id ?? null, q.category_id ?? null, q.fy ?? null, q.fy ?? null]);
   if (req.user!.role === 'employee') {
     const allowed = employeeCategories(req.user!.id, companyId);

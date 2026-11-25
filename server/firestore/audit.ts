@@ -36,7 +36,15 @@ function rowHash(r: Omit<AuditDoc, 'hash' | 'seq'>): string {
   ]));
 }
 
-export async function audit(e: AuditEntry): Promise<void> {
+// Entries written at once collide on the counter and retry for seconds, so this server writes them one at a time.
+let last: Promise<unknown> = Promise.resolve();
+export function audit(e: AuditEntry): Promise<void> {
+  const mine = last.then(() => append(e));
+  last = mine.catch(() => {}); // one failure must not stop the entries behind it
+  return mine;
+}
+
+async function append(e: AuditEntry): Promise<void> {
   const counter = db.collection(C.counters).doc('audit');
   await db.runTransaction(async (t) => {
     const snap = await t.get(counter);

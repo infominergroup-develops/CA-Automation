@@ -102,7 +102,7 @@ try {
   const detail = await dir.get(`/api/companies/${companyId}`);
   check('company detail + 2 contacts', detail.data.company.manager_name === 'Ambrish' && detail.data.contacts.length === 2, detail.data);
   const cats = (await dir.get('/api/categories')).data as { id: string; name: string }[];
-  check('16 document types, with profit and loss', cats.length === 16 && cats.some((c) => c.name === 'Profit and loss'));
+  check('17 document types in order, Others last', cats.length === 17 && cats[0].name === 'Bank statements' && cats[1].name === 'Registrations' && cats[16].name === 'Others');
   const bank = cats.find((c) => c.name === 'Bank statements')!.id, gst = cats.find((c) => c.name === 'GST documents')!.id;
 
   check('settings readable', (await dir.get('/api/settings')).data.firm_name === 'Infominer');

@@ -5,7 +5,7 @@ import { config } from '../config.ts';
 import { cleanName, detectType, zFy, zText } from '../shared.ts';
 import { assertCompany, canViewDocument, inScope, userNames } from '../firestore/authz.ts';
 import {
-  IntegrityError, createDocument, docFolder, getDocumentMeta, listCategories, listDocuments, readDocument, reviewDocument, softDeleteDocument,
+  IntegrityError, cleanSubfolder, createDocument, docFolder, getDocumentMeta, listCategories, listDocuments, readDocument, reviewDocument, softDeleteDocument,
 } from '../firestore/documents.ts';
 import { HttpError, auditReq, h, parse, requireAuth, requireRole } from '../firestore/http.ts';
 import { employeeCategories } from '../firestore/tasks.ts';
@@ -25,8 +25,9 @@ documentsRouter.get('/companies/:companyId/documents', requireAuth, h(async (req
   const q = parse(z.object({ category_id: zCategory.optional(), fy: zFy.optional() }), req.query);
   const [docs, cats, users] = await Promise.all([listDocuments(companyId, { categoryId: q.category_id, fy: q.fy }), listCategories(), userNames()]);
   const catName = new Map(cats.map((c) => [c.id, c.name]));
-  let rows = docs.slice(0, 500).map((d) => ({
-    id: d.id, category_id: d.category_id, category: catName.get(d.category_id) ?? d.category_id, fy: d.fy, month: d.month,
+  // shortcut: the whole client at once, so the page can show folders; load per year past a few thousand files.
+  let rows = docs.slice(0, 5000).map((d) => ({
+    id: d.id, category_id: d.category_id, category: catName.get(d.category_id) ?? d.category_id, fy: d.fy, month: d.month, subfolder: d.subfolder ?? null,
     original_name: d.original_name, mime: d.mime, size: d.size, sha256: d.sha256, review_status: d.review_status,
     review_note: d.review_note, created_at: d.created_at, uploaded_by: d.uploaded_by,
     uploaded_by_name: users.get(d.uploaded_by)?.name ?? '', uploaded_by_role: users.get(d.uploaded_by)?.role ?? '',
@@ -51,10 +52,11 @@ documentsRouter.post('/companies/:companyId/documents', requireAuth, upload.arra
     category_id: zCategory,
     fy: zFy,
     month: z.coerce.number().int().min(1).max(12).optional().or(z.literal('').transform(() => undefined)),
+    subfolder: z.string().max(1000).default('').transform(cleanSubfolder),
   }), req.body);
   const category = (await listCategories()).find((c) => c.id === b.category_id);
   if (!category) throw new HttpError(400, 'Unknown category.');
-  const folder = docFolder(company.legal_name, b.fy, category.name);
+  const folder = docFolder(company.legal_name, b.fy, category.name, b.month, b.subfolder);
   const files = (req.files as Express.Multer.File[] | undefined) ?? [];
   if (!files.length) throw new HttpError(400, 'Choose at least one file.');
 
@@ -68,7 +70,7 @@ documentsRouter.post('/companies/:companyId/documents', requireAuth, upload.arra
 
   const saved = [];
   for (const p of prepared) {
-    const d = await createDocument({ companyId, categoryId: b.category_id, fy: b.fy, month: b.month ?? null, name: p.name, mime: p.mime, bytes: p.f.buffer, uploadedBy: req.user!.id, folder });
+    const d = await createDocument({ companyId, categoryId: b.category_id, fy: b.fy, month: b.month ?? null, name: p.name, mime: p.mime, bytes: p.f.buffer, uploadedBy: req.user!.id, folder, subfolder: b.subfolder });
     await auditReq(req, { action: 'document.uploaded', objectType: 'document', objectId: d.id, companyId,
       details: { name: p.name, size: p.f.size, sha256: d.sha256, category_id: b.category_id, fy: b.fy, duplicateOf: d.duplicateOf?.id } });
     saved.push({ id: d.id, name: p.name, sha256: d.sha256, duplicateOf: d.duplicateOf ? { id: d.duplicateOf.id, uploadedAt: d.duplicateOf.created_at } : null });

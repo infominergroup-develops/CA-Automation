@@ -6,9 +6,9 @@ import { C } from './types.ts';
 
 /** Default document categories (same list as the SQLite build), keyed by a stable slug. */
 export const DEFAULT_CATEGORIES = [
-  'Bank statements', 'Sales invoices', 'Purchase bills', 'Expense bills', 'GST documents',
-  'TDS / TCS', 'Payroll and PF/ESI', 'Fixed assets', 'Loans', 'Investments', 'Income tax',
-  'ROC / MCA', 'KYC', 'Others', 'Profit and loss', 'Balance sheet',
+  'Bank statements', 'Registrations', 'Profit and loss', 'Balance sheet', 'Sales invoices', 'Purchase bills',
+  'Expense bills', 'GST documents', 'TDS / TCS', 'Payroll and PF/ESI', 'Fixed assets', 'Loans', 'Investments',
+  'Income tax', 'ROC / MCA', 'KYC', 'Others',
 ];
 const slug = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 
@@ -17,8 +17,10 @@ export interface DocumentDoc {
   id: string; company_id: string; category_id: string; fy: string; month: number | null;
   original_name: string; mime: string; size: number; sha256: string;
   wrapped_key: string; iv: string; auth_tag: string;
-  /** Where the ciphertext lives in the bucket, e.g. `Mehta Traders/2025-26/Bank statements/2026-04-15_April.pdf.<id>.enc`. */
+  /** Where the ciphertext lives in the bucket, e.g. `Mehta Traders/2026-27/Bank statements/2026-04 April/2026-05-02_HDFC.pdf.<id>.enc`. */
   blob_key: string;
+  /** Folders inside an uploaded folder that are not a year, document type or month, e.g. `HDFC/Current account`. */
+  subfolder?: string;
   uploaded_by: string; review_status: 'pending' | 'accepted' | 'reupload' | 'not_needed';
   review_note: string | null; reviewed_by: string | null;
   deleted_at: string | null; deleted_by: string | null; created_at: string;
@@ -30,7 +32,8 @@ const strip = ({ wrapped_key, iv, auth_tag, ...meta }: DocumentDoc): DocumentMet
 export async function ensureCategories(): Promise<void> {
   await Promise.all(DEFAULT_CATEGORIES.map(async (name, i) => {
     const id = slug(name);
-    if (!(await getById(C.documentCategories, id))) await db.collection(C.documentCategories).doc(id).set({ id, name, sort: i, active: true });
+    const existing = await getById<Category>(C.documentCategories, id);
+    if (existing?.sort !== i) await db.collection(C.documentCategories).doc(id).set({ id, name, sort: i, active: existing?.active ?? true });
   }));
 }
 export async function listCategories(): Promise<Category[]> {
@@ -47,14 +50,22 @@ export interface UploadInput {
   companyId: string; categoryId: string; fy: string; month: number | null; name: string; mime: string; bytes: Buffer; uploadedBy: string;
   /** Bucket folder from docFolder(). */
   folder: string;
+  subfolder?: string;
 }
 
 /** One safe folder name: no slashes, control characters or leading dots (so no `..`). */
 export const segment = (s: string) => s.replace(/[\u0000-\u001f\u007f/\\]/g, '_').trim().replace(/^\.+/, '_').slice(0, 100) || '_';
 
-/** Client / financial year / document type, as readable folders in the bucket. Contents stay encrypted. */
-export const docFolder = (client: string, fy: string, category: string) =>
-  [client, fy, category].map(segment).join('/');
+/** Safe form of an uploaded folder's inner path; short, because a bucket path may be at most 1,024 bytes in all. */
+export const cleanSubfolder = (path: string) => path.split('/').filter(Boolean).slice(0, 5).map(segment).join('/').slice(0, 90).replace(/\/+$/, '');
+
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+/** `2026-04 April` … `2027-03 March`, so a financial year's months sort in order. */
+const monthFolder = (fy: string, month: number) => `${Number(fy.slice(0, 4)) + (month < 4 ? 1 : 0)}-${String(month).padStart(2, '0')} ${MONTHS[month - 1]}`;
+
+/** Client / financial year / document type / month, as readable folders in the bucket. Contents stay encrypted. */
+export const docFolder = (client: string, fy: string, category: string, month?: number | null, subfolder = '') =>
+  [client, fy, category, ...(month ? [monthFolder(fy, month)] : []), ...subfolder.split('/').filter(Boolean)].map(segment).join('/');
 
 /** Encrypts the file, stores the ciphertext, and records metadata. Returns the id, hash and any duplicate. */
 export async function createDocument(u: UploadInput): Promise<{ id: string; sha256: string; duplicateOf: { id: string; created_at: string } | null }> {
@@ -68,7 +79,7 @@ export async function createDocument(u: UploadInput): Promise<{ id: string; sha2
   try {
     const doc: DocumentDoc = {
       id, company_id: u.companyId, category_id: u.categoryId, fy: u.fy, month: u.month,
-      original_name: u.name, mime: u.mime, size: u.bytes.length, sha256: hash,
+      ...(u.subfolder && { subfolder: u.subfolder }), original_name: u.name, mime: u.mime, size: u.bytes.length, sha256: hash,
       wrapped_key: enc.wrappedKey, iv: enc.iv, auth_tag: enc.authTag, blob_key: key,
       uploaded_by: u.uploadedBy, review_status: 'pending', review_note: null, reviewed_by: null,
       deleted_at: null, deleted_by: null, created_at: now(),

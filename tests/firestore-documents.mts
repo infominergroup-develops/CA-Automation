@@ -6,7 +6,7 @@
 import './emulator-only.mts';
 import { db } from '../server/firestore/client.ts';
 import {
-  ensureCategories, listCategories, createDocument, docFolder, listDocuments, getDocumentMeta, readDocument,
+  ensureCategories, listCategories, cleanSubfolder, createDocument, docFolder, listDocuments, getDocumentMeta, readDocument,
   reviewDocument, softDeleteDocument, findDuplicate, IntegrityError, DEFAULT_CATEGORIES,
 } from '../server/firestore/documents.ts';
 import { blobs } from '../server/firestore/storage.ts';
@@ -38,6 +38,10 @@ check('upload returns id + hash', !!up.id && up.sha256.length === 64 && up.dupli
 const key = (await getDocumentMeta(up.id))!.blob_key;
 check('stored in client / year / document-type folder', key.startsWith('Mehta Traders Pvt Ltd/2026-27/Bank statements/') && key.endsWith(`_HDFC Sep.pdf.${up.id}.enc`), key);
 check('folder names cannot escape or add levels', docFolder('../evil/A', '2026-27', '..') === '__evil_A/2026-27/_');
+check('month folders sort through the year', [4, 12, 1, 3].map((m) => docFolder('C', '2026-27', 'GST documents', m).split('/')[3]).join() === '2026-04 April,2026-12 December,2027-01 January,2027-03 March');
+check('without a month, the file sits in its folder', docFolder('C', '2026-27', 'GST documents', null) === 'C/2026-27/GST documents');
+check('inner folders are kept, safely', docFolder('C', '2026-27', 'Others', 4, cleanSubfolder('HDFC/../..//a\\b/Current')) === 'C/2026-27/Others/2026-04 April/HDFC/_/_/a_b/Current');
+check('longest possible path fits the bucket limit', Buffer.byteLength(`${docFolder('क'.repeat(200), '2026-27', 'Payroll and PF/ESI', 9, cleanSubfolder('ख'.repeat(400) + '/' + 'ग'.repeat(400)))}/2026-11-25_${'घ'.repeat(100)}.${up.id}.enc`) <= 1024);
 const stored = await blobs.get(key);
 check('stored bytes are ciphertext (not the plaintext)', !stored.includes(Buffer.from('%PDF')) && !stored.equals(plain));
 

@@ -144,7 +144,7 @@ One-time setup: `scripts/firebase-setup.sh`. On `infominer-dev-fdbfa` it has bee
 
 Moving passwords from Firestore to Firebase Authentication (once per project, before deploying a version that uses it): `scripts/move-passwords-to-firebase.ts`.
 
-Documents are stored as `Client / Financial year / Document type / date_name.<id>.enc`. The folders appear when the first file is uploaded; contents stay encrypted.
+Documents are stored as `Client / Financial year / Document type / Month / date_name.<id>.enc` (no month folder for files that belong to no month; an uploaded folder's other inner folders are kept after it). The folders appear when the first file is uploaded; contents stay encrypted.
 
 Deploy or update:
 ```bash

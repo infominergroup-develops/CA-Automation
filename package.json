@@ -27,7 +27,8 @@
     "start:fs": "GRPC_DNS_RESOLVER=native NODE_ENV=production tsx server/index-fs.ts",
     "seed:fs": "GRPC_DNS_RESOLVER=native tsx server/seed-fs.ts",
     "test:fs:portal": "tsx tests/fs-http-portal.mts",
-    "test:fs:clientpw": "tsx tests/fs-http-client-password.mts"
+    "test:fs:clientpw": "tsx tests/fs-http-client-password.mts",
+    "test:place": "tsx tests/place-file.mts"
   },
   "dependencies": {
     "@aws-sdk/client-secrets-manager": "^3.1147.0",

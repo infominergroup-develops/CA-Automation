@@ -95,6 +95,13 @@ check('new notice version invalidates old consent', !(await hasCurrentConsent(cl
 for (const a of [1, 2, 3, 4, 5]) await audit({ actorId: dir, actorRole: 'director', action: `test.event_${a}`, ip: '1.2.3.4', details: { n: a } });
 const v1 = await verifyAuditChain();
 check('audit chain intact after appends', v1.ok && v1.checked === 5, v1);
+const t0 = Date.now();
+await Promise.all(Array.from({ length: 12 }, (_, n) => audit({ actorId: dir, action: 'test.together', details: { n } })));
+const v12 = await verifyAuditChain();
+check('12 entries at once: all kept, chain intact, no pile-up', v12.ok && v12.checked === 17 && Date.now() - t0 < 10_000, { ...v12, ms: Date.now() - t0 });
+let bad = false;
+await Promise.all([audit({ action: undefined as unknown as string, details: { big: 1n } as never }).catch(() => { bad = true; }), audit({ action: 'test.after_failure' })]);
+check('a failed entry reports its error and does not block the next', bad && (await verifyAuditChain()).checked === 18);
 // tamper with an entry → chain must break
 const first = (await db.collection(C.audit).orderBy('seq').limit(1).get()).docs[0];
 await first.ref.update({ action: 'test.TAMPERED' });
