@@ -191,7 +191,7 @@ function StaffCompany() {
       ]} />
       {tab === 'docs' && <DocumentsPanel companyId={c.id} />}
       {hasTally && tab === 'reports' && <ReportsPanel companyId={c.id} />}
-      {tab === 'tasks' && <Card padded={false}>{tasks && <TaskTable rows={tasks} />}</Card>}
+      {tab === 'tasks' && <Card padded={false}>{tasks && <TaskTable rows={tasks} onChanged={reloadTasks} />}</Card>}
       {tab === 'contacts' && (
         <Card title="People who can sign in for this client" padded={false} actions={<Button variant="secondary" icon={UserPlus} onClick={() => setAddContact(true)}>Add login</Button>}>
           {!data.contacts.length ? <EmptyState icon={Users} title="No logins yet" /> : (

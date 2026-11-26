@@ -32,7 +32,25 @@ function Logged({ t }: { t: TaskRow }) {
   );
 }
 
-export function TaskTable({ rows }: { rows: TaskRow[] }) {
+/** Directors and managers assign a client request straight from any task list. */
+function AssignButton({ t, onDone }: { t: TaskRow; onDone?: () => void }) {
+  const [form, setForm] = useState<{ type: string; title: string; instructions: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const toast = useToast();
+  // The client's own description is loaded first, so assigning keeps it.
+  const open = () => { setBusy(true); api<{ type: string; title: string; instructions: string | null }>(`/tasks/${t.id}`)
+    .then((d) => setForm({ type: d.type, title: d.title, instructions: d.instructions ?? '' }), (e) => toast((e as Error).message, 'error')).finally(() => setBusy(false)); };
+  return (
+    <>
+      <Button size="sm" icon={Plus} busy={busy} onClick={open}>Assign</Button>
+      {form && <TaskForm assignTaskId={t.id} initial={form} onClose={() => setForm(null)} onDone={() => { setForm(null); onDone?.(); }} />}
+    </>
+  );
+}
+
+export function TaskTable({ rows, onChanged }: { rows: TaskRow[]; onChanged?: () => void }) {
+  const u = useUser();
+  const canAssign = (t: TaskRow) => t.status === 'requested' && (u.role === 'director' || u.role === 'manager');
   if (!rows.length) return <EmptyState icon={ListChecks} title="No tasks here">Tasks matching this view will appear here.</EmptyState>;
   return (
     <>
@@ -49,7 +67,7 @@ export function TaskTable({ rows }: { rows: TaskRow[] }) {
                 </div>
               </Td>
               <Td className="text-slate-700">{t.company}</Td>
-              <Td>{t.assignee ? <span className="flex items-center gap-2"><Avatar name={t.assignee} size="sm" /><span className="text-slate-700">{t.assignee}</span></span> : <span className="text-slate-400">Unassigned</span>}</Td>
+              <Td>{t.assignee ? <span className="flex items-center gap-2"><Avatar name={t.assignee} size="sm" /><span className="text-slate-700">{t.assignee}</span></span> : canAssign(t) ? <AssignButton t={t} onDone={onChanged} /> : <span className="text-slate-400">Unassigned</span>}</Td>
               <Td className={`whitespace-nowrap tabular-nums ${isLate(t) ? 'text-red-600 font-semibold' : 'text-slate-700'}`}>{fmtDate(t.due_date)}{isLate(t) && <span className="sr-only"> (overdue)</span>}</Td>
               <Td><Logged t={t} /></Td>
               <Td><StatusBadge status={t.status} /></Td>
@@ -59,7 +77,8 @@ export function TaskTable({ rows }: { rows: TaskRow[] }) {
       </div>
       <ul className="md:hidden divide-y divide-line">
         {rows.map((t) => (
-          <li key={t.id}>
+          <li key={t.id} className="relative">
+            {canAssign(t) && <span className="absolute right-5 bottom-3"><AssignButton t={t} onDone={onChanged} /></span>}
             <Link to={`/tasks/${t.id}`} className="block px-5 py-3.5">
               <div className="flex justify-between gap-3 items-start">
                 <span className="font-semibold text-ink">{t.title}</span>
@@ -114,7 +133,7 @@ export function Tasks() {
         { value: 'all', label: 'All' },
       ]} />
       <Card padded={false}>
-        {err ? <div className="p-5"><ErrorText error={err} /></div> : loading && !rows ? <div className="p-5"><LoadingRows /></div> : rows && <TaskTable rows={rows.filter(FILTERS[filter])} />}
+        {err ? <div className="p-5"><ErrorText error={err} /></div> : loading && !rows ? <div className="p-5"><LoadingRows /></div> : rows && <TaskTable rows={rows.filter(FILTERS[filter])} onChanged={reload} />}
       </Card>
       {creating && <TaskForm onClose={() => set('new', null)} onDone={() => { set('new', null); reload(); }} />}
     </>
@@ -377,7 +396,7 @@ export function TaskDetail() {
       {modal === 'approve' && <ApproveModal onClose={() => setModal(null)} onSave={(b) => act('approve', b, 'Approved. The client has been updated.')} />}
       {modal === 'access' && <AccessModal cats={cats ?? []} onClose={() => setModal(null)}
         onSave={(b) => api(`/tasks/${id}/access-requests`, { body: b }).then(() => { toast('Access requested. Your manager has been notified.'); setModal(null); reload(); })} />}
-      {modal === 'assign' && <TaskForm assignTaskId={t.id} initial={{ title: t.title, instructions: t.instructions ?? '' }} onClose={() => setModal(null)} onDone={() => { setModal(null); reload(); }} />}
+      {modal === 'assign' && <TaskForm assignTaskId={t.id} initial={{ type: t.type, title: t.title, instructions: t.instructions ?? '' }} onClose={() => setModal(null)} onDone={() => { setModal(null); reload(); }} />}
     </>
   );
 }

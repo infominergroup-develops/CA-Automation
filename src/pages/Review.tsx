@@ -11,7 +11,7 @@ interface AccessReq { id: string; task_id: string; category_ids: number[]; reaso
 export function Review() {
   const toast = useToast();
   const [toReview, e1, , l1] = useLoad(() => api<TaskRow[]>('/tasks?view=review'));
-  const [requests, e2, , l2] = useLoad(() => api<TaskRow[]>('/tasks?view=requests'));
+  const [requests, e2, reloadRequests, l2] = useLoad(() => api<TaskRow[]>('/tasks?view=requests'));
   const [access, e3, reloadAccess, l3] = useLoad(() => api<AccessReq[]>('/access-requests'));
   const [cats] = useLoad(() => api<Category[]>('/categories'));
   const [tab, setTab] = useState<'review' | 'access' | 'requests'>('review');
@@ -69,7 +69,7 @@ export function Review() {
 
       {tab === 'requests' && (
         <Card padded={false}>
-          {l2 && !requests ? <div className="p-5"><LoadingRows /></div> : requests?.length ? <TaskTable rows={requests} /> : (
+          {l2 && !requests ? <div className="p-5"><LoadingRows /></div> : requests?.length ? <TaskTable rows={requests} onChanged={reloadRequests} /> : (
             <EmptyState icon={CircleCheck} title="No new client requests">Requests clients raise from their portal land here to be assigned.</EmptyState>
           )}
         </Card>
