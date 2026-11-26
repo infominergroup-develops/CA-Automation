@@ -15,7 +15,7 @@ interface Company {
   id: string; legal_name: string; pan: string | null; gstin: string | null; tally_name: string | null; group_id: string;
   group_name: string; manager_name: string | null; pending_docs: number; open_tasks: number; work_types?: string[];
 }
-export interface StaffUser { id: string; role: string; name: string; email: string; mobile: string; status: string }
+export interface StaffUser { id: string; role: string; name: string; email: string; mobile: string; status: string; designation?: string | null }
 
 export function Clients() {
   const u = useUser();

@@ -4,7 +4,7 @@ import { zId, zText } from '../shared.ts';
 import { db } from '../firestore/client.ts';
 import { HttpError, auditReq, h, parse, requireRole } from '../firestore/http.ts';
 import { FieldValue, newId, now, query } from '../firestore/store.ts';
-import { C, type ClientSetDoc, type CompanyDoc, type UserDoc, type WorkTypeDoc } from '../firestore/types.ts';
+import { C, type ClientSetDoc, type CompanyDoc, type DesignationDoc, type UserDoc, type WorkTypeDoc } from '../firestore/types.ts';
 
 /** The client master: work types per client, named client groups given to staff, and clients ticked per employee. */
 export const masterRouter = Router();
@@ -114,5 +114,61 @@ masterRouter.put('/users/:id/clients', director, h(async (req, res) => {
   await checkCompanies(company_ids);
   await ref.update({ client_ids: company_ids, updated_at: now() });
   await auditReq(req, { action: 'user.clients_set', objectType: 'user', objectId: ref.id, details: { clients: company_ids.length } });
+  res.json({ ok: true });
+}));
+
+/* ---------- Designations ---------- */
+
+masterRouter.get('/designations', director, h(async (_req, res) => {
+  res.json((await query<DesignationDoc>(C.designations)).sort((a, b) => a.name.localeCompare(b.name)));
+}));
+
+async function assertNewName(name: string, exceptId?: string) {
+  const taken = (await query<DesignationDoc>(C.designations)).some((d) => d.id !== exceptId && d.name.toLowerCase() === name.toLowerCase());
+  if (taken) throw new HttpError(409, `There is already a designation called ${name}.`);
+}
+
+masterRouter.post('/designations', director, h(async (req, res) => {
+  const { name } = parse(z.object({ name: zText(60).min(2) }), req.body);
+  await assertNewName(name);
+  const doc: DesignationDoc = { id: newId(), name, created_at: now() };
+  await db.collection(C.designations).doc(doc.id).set(doc);
+  await auditReq(req, { action: 'master.designation_added', objectType: 'designation', objectId: doc.id, details: { name } });
+  res.status(201).json(doc);
+}));
+
+masterRouter.put('/designations/:id', director, h(async (req, res) => {
+  const { name } = parse(z.object({ name: zText(60).min(2) }), req.body);
+  const ref = db.collection(C.designations).doc(String(req.params.id));
+  const old = (await ref.get()).data() as DesignationDoc | undefined;
+  if (!old) throw new HttpError(404, 'Not found.');
+  await assertNewName(name, ref.id);
+  await ref.update({ name });
+  await auditReq(req, { action: 'master.designation_renamed', objectType: 'designation', objectId: ref.id, details: { from: old.name, to: name } });
+  res.json({ ok: true });
+}));
+
+masterRouter.delete('/designations/:id', director, h(async (req, res) => {
+  const ref = db.collection(C.designations).doc(String(req.params.id));
+  const old = (await ref.get()).data() as DesignationDoc | undefined;
+  if (!old) throw new HttpError(404, 'Not found.');
+  const holders = await query<UserDoc>(C.users, { where: [['designation_id', '==', ref.id]] });
+  const batch = db.batch();
+  batch.delete(ref);
+  holders.forEach((u) => batch.update(db.collection(C.users).doc(u.id), { designation_id: null, updated_at: now() }));
+  await batch.commit();
+  await auditReq(req, { action: 'master.designation_removed', objectType: 'designation', objectId: ref.id, details: { name: old.name, staff: holders.length } });
+  res.json({ ok: true });
+}));
+
+/** Give a staff member a designation, or change or clear it. */
+masterRouter.put('/users/:id/designation', director, h(async (req, res) => {
+  const { designation_id } = parse(z.object({ designation_id: zId.nullable() }), req.body);
+  const ref = db.collection(C.users).doc(String(req.params.id));
+  const u = (await ref.get()).data() as UserDoc | undefined;
+  if (!u || u.role === 'client') throw new HttpError(404, 'Not found.');
+  if (designation_id && !(await db.collection(C.designations).doc(designation_id).get()).exists) throw new HttpError(400, 'Unknown designation.');
+  await ref.update({ designation_id, updated_at: now() });
+  await auditReq(req, { action: 'user.designation_set', objectType: 'user', objectId: ref.id, details: { from: u.designation_id ?? null, to: designation_id } });
   res.json({ ok: true });
 }));

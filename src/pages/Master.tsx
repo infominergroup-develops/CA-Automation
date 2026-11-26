@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { FolderPlus, Plus, Search, Trash2, Users, X } from 'lucide-react';
+import { FolderPlus, Pencil, Plus, Search, Trash2, Users, X } from 'lucide-react';
 import { api } from '../api';
 import {
   Badge, Button, Card, Chip, EmptyState, ErrorText, Field, Input, LoadingRows, PageHeader, Select, Table, Tabs, Td, useConfirm, useLoad, useToast,
@@ -9,31 +9,35 @@ import {
 interface Client { id: string; legal_name: string; group_name: string; work_types: string[] }
 interface WorkType { id: string; name: string }
 interface ClientSet { id: string; name: string; company_ids: string[]; member_ids: string[] }
-interface Staff { id: string; name: string; role: string; status: string; client_ids?: string[] }
+interface Staff { id: string; name: string; role: string; status: string; client_ids?: string[]; designation_id?: string | null }
+interface Designation { id: string; name: string }
 
-/** Director's client master: what work we do for each client, and which staff see which clients. */
+/** Director's masters: what work we do for each client, which staff see which clients, and staff designations. */
 export function ClientMaster() {
   const [params, setParams] = useSearchParams();
-  const tab = (params.get('tab') ?? 'work') as 'work' | 'groups' | 'staff';
+  const tab = (params.get('tab') ?? 'work') as 'work' | 'groups' | 'staff' | 'titles';
   const [clients, e1, reloadClients] = useLoad(() => api<Client[]>('/companies'));
   const [types, e2, reloadTypes] = useLoad(() => api<WorkType[]>('/work-types'));
   const [sets, e3, reloadSets] = useLoad(() => api<ClientSet[]>('/client-sets'));
   const [staff, e4, reloadStaff] = useLoad(() => api<Staff[]>('/users'));
+  const [titles, e5, reloadTitles] = useLoad(() => api<Designation[]>('/designations'));
   const team = (staff ?? []).filter((s) => s.status === 'active' && (s.role === 'employee' || s.role === 'manager'));
-  const ready = clients && types && sets && staff;
+  const ready = clients && types && sets && staff && titles;
   return (
     <>
-      <PageHeader title="Client master" subtitle="What we do for each client, and which staff see which clients. Managers see every client; employees see these plus their own tasks and clients they added." />
-      <ErrorText error={e1 || e2 || e3 || e4} />
+      <PageHeader title="Masters" subtitle="What we do for each client, which staff see which clients, and each person's designation. Managers see every client; employees see these plus their own tasks and clients they added." />
+      <ErrorText error={e1 || e2 || e3 || e4 || e5} />
       <Tabs value={tab} onChange={(t) => setParams({ tab: t }, { replace: true })} items={[
         { value: 'work', label: 'Work types' },
         { value: 'groups', label: 'Client groups', count: sets?.length },
         { value: 'staff', label: 'Employee access' },
+        { value: 'titles', label: 'Designations', count: titles?.length },
       ]} />
       {!ready ? <LoadingRows rows={6} />
         : tab === 'work' ? <WorkTypes clients={clients} types={types} onChange={() => { reloadClients(); reloadTypes(); }} />
           : tab === 'groups' ? <Groups clients={clients} sets={sets} team={team} onChange={reloadSets} />
-            : <EmployeeAccess clients={clients} sets={sets} staff={staff.filter((s) => s.role === 'employee' && s.status === 'active')} onChange={reloadStaff} />}
+            : tab === 'staff' ? <EmployeeAccess clients={clients} sets={sets} staff={staff.filter((s) => s.role === 'employee' && s.status === 'active')} onChange={reloadStaff} />
+              : <Designations titles={titles} staff={staff.filter((s) => s.status === 'active')} onChange={() => { reloadTitles(); reloadStaff(); }} />}
     </>
   );
 }
@@ -244,5 +248,76 @@ function EmployeeTicks({ person, clients, sets, onSaved }: { person: Staff; clie
       <ErrorText error={err} />
       <div className="flex justify-end"><Button busy={busy} onClick={save}>Save for {person.name}</Button></div>
     </>
+  );
+}
+
+function Designations({ titles, staff, onChange }: { titles: Designation[]; staff: Staff[]; onChange: () => void }) {
+  const toast = useToast();
+  const confirm = useConfirm();
+  const [name, setName] = useState('');
+  const [editing, setEditing] = useState<{ id: string; name: string } | null>(null);
+  const [err, setErr] = useState<unknown>();
+  const run = async (fn: () => Promise<unknown>, ok: string) => {
+    setErr(undefined);
+    try { await fn(); toast(ok); onChange(); } catch (e) { setErr(e); onChange(); }
+  };
+  const holders = (id: string) => staff.filter((s) => s.designation_id === id).length;
+  const add = () => run(() => api('/designations', { body: { name: name.trim() } }).then(() => setName('')), `${name.trim()} added`);
+  const rename = () => editing && run(() => api(`/designations/${editing.id}`, { method: 'PUT', body: { name: editing.name.trim() } }).then(() => setEditing(null)), 'Designation renamed');
+  const remove = async (d: Designation) => {
+    const n = holders(d.id);
+    if (await confirm({ title: `Remove ${d.name}?`, body: n ? `${n} staff member${n === 1 ? '' : 's'} will have no designation until you give them another.` : 'Nobody has this designation.', confirmLabel: 'Remove', danger: true })) {
+      run(() => api(`/designations/${d.id}`, { method: 'DELETE' }), `${d.name} removed`);
+    }
+  };
+  const assign = (s: Staff, id: string) => run(() => api(`/users/${s.id}/designation`, { method: 'PUT', body: { designation_id: id || null } }), `${s.name}'s designation saved`);
+  return (
+    <div className="grid lg:grid-cols-[22rem_1fr] gap-6 items-start">
+      <Card title="Designations" description="Titles for your staff. A designation is a label: what someone can do still comes from their role." padded={false}>
+        <ul className="divide-y divide-line">
+          {titles.map((d) => (
+            <li key={d.id} className="flex items-center gap-2 px-5 py-2.5">
+              {editing?.id === d.id ? (
+                <>
+                  <Input value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })} maxLength={60} aria-label={`New name for ${d.name}`} autoFocus
+                    onKeyDown={(e) => { if (e.key === 'Enter' && editing.name.trim().length >= 2) rename(); if (e.key === 'Escape') setEditing(null); }} className="h-9!" />
+                  <Button size="sm" disabled={editing.name.trim().length < 2} onClick={rename}>Save</Button>
+                  <Button size="sm" variant="ghost" onClick={() => setEditing(null)}>Cancel</Button>
+                </>
+              ) : (
+                <>
+                  <span className="flex-1 text-sm font-semibold text-ink">{d.name}</span>
+                  <span className="text-xs text-slate-500">{holders(d.id)} staff</span>
+                  <button type="button" aria-label={`Rename ${d.name}`} onClick={() => setEditing({ id: d.id, name: d.name })} className="grid place-items-center size-8 rounded-full text-slate-400 hover:bg-slate-100 hover:text-ink"><Pencil className="size-4" aria-hidden /></button>
+                  <button type="button" aria-label={`Remove ${d.name}`} onClick={() => remove(d)} className="grid place-items-center size-8 rounded-full text-slate-400 hover:bg-slate-100 hover:text-red-600"><Trash2 className="size-4" aria-hidden /></button>
+                </>
+              )}
+            </li>
+          ))}
+          {!titles.length && <li className="px-5 py-3 text-sm text-slate-500">No designations yet. Add the first one below.</li>}
+        </ul>
+        <div className="p-4 border-t border-line flex gap-2">
+          <Input value={name} onChange={(e) => setName(e.target.value)} maxLength={60} placeholder="e.g. Senior Accountant" aria-label="New designation" onKeyDown={(e) => { if (e.key === 'Enter' && name.trim().length >= 2) add(); }} />
+          <Button icon={Plus} disabled={name.trim().length < 2} onClick={add}>Add</Button>
+        </div>
+        <div className="px-4 pb-2"><ErrorText error={err} /></div>
+      </Card>
+      <Card title="Staff" description="Pick a designation for each person. Change it here any time." padded={false}>
+        <Table head={['Name', 'Role', 'Designation']}>
+          {staff.map((s) => (
+            <tr key={s.id}>
+              <Td className="font-semibold text-ink">{s.name}</Td>
+              <Td className="text-slate-600">{s.role[0].toUpperCase() + s.role.slice(1)}</Td>
+              <Td>
+                <Select value={s.designation_id ?? ''} onChange={(e) => assign(s, e.target.value)} aria-label={`Designation for ${s.name}`} className="max-w-60">
+                  <option value="">No designation</option>
+                  {titles.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+                </Select>
+              </Td>
+            </tr>
+          ))}
+        </Table>
+      </Card>
+    </div>
   );
 }

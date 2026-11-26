@@ -183,6 +183,22 @@ try {
   check('ticks only for employees', (await dir.put(`/api/users/${mgrId}/clients`, { company_ids: [] })).status === 404);
   check('unticked: access ends', (await dir.put(`/api/users/${vivek}/clients`, { company_ids: [] })).status === 200 && (await emp2.get(mehtaDocs)).status === 404);
   check('deleting a group', (await dir.del(`/api/client-sets/${set.data.id}`)).status === 200 && (await dir.get('/api/client-sets')).data.length === 0);
+
+  // Designation master: the director makes titles and gives or changes each person's.
+  const title = (id: string) => (dir.get('/api/users') as Promise<any>).then((r) => r.data.find((x: any) => x.id === id)?.designation);
+  check('only the director manages designations', (await mgr.post('/api/designations', { name: 'Partner' })).status === 403 && (await emp.get('/api/designations')).status === 403);
+  const senior = await dir.post('/api/designations', { name: 'Senior Accountant' });
+  const article = await dir.post('/api/designations', { name: 'Article Assistant' });
+  check('director adds designations', senior.status === 201 && article.status === 201);
+  check('duplicate designation refused', (await dir.post('/api/designations', { name: 'senior accountant' })).status === 409);
+  check('director gives a designation', (await dir.put(`/api/users/${empId}/designation`, { designation_id: article.data.id })).status === 200 && (await title(empId)) === 'Article Assistant');
+  check('director reassigns it', (await dir.put(`/api/users/${empId}/designation`, { designation_id: senior.data.id })).status === 200 && (await title(empId)) === 'Senior Accountant');
+  check('unknown designation refused', (await dir.put(`/api/users/${empId}/designation`, { designation_id: '00000000-0000-4000-8000-000000000000' })).status === 400);
+  check('clients get no designation', (await dir.put(`/api/users/${userId}/designation`, { designation_id: senior.data.id })).status === 404);
+  check('employee cannot set designations', (await emp.put(`/api/users/${empId}/designation`, { designation_id: null })).status === 403);
+  check('renaming shows everywhere', (await dir.put(`/api/designations/${senior.data.id}`, { name: 'Senior Associate' })).status === 200 && (await title(empId)) === 'Senior Associate');
+  check('rename cannot clash', (await dir.put(`/api/designations/${senior.data.id}`, { name: 'Article Assistant' })).status === 409);
+  check('removing a designation clears it from staff', (await dir.del(`/api/designations/${senior.data.id}`)).status === 200 && (await title(empId)) === null);
   check('master changes are audited', (await dir.get('/api/audit?action=client_set.')).data.length >= 3);
 } catch (e) {
   fail++; console.error(e);

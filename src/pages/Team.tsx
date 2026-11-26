@@ -42,7 +42,7 @@ export function Team() {
           <Table head={['Name', 'Role', 'Contact', 'Since', 'Status', '']}>
             {rows.map((s) => (
               <tr key={s.id} className="hover:bg-slate-50/70">
-                <Td><span className="flex items-center gap-3"><Avatar name={s.name} /><span className="font-semibold text-ink">{s.name}{s.id === u.id && <span className="text-xs font-normal text-slate-400"> (you)</span>}</span></span></Td>
+                <Td><span className="flex items-center gap-3"><Avatar name={s.name} /><span className="font-semibold text-ink">{s.name}{s.id === u.id && <span className="text-xs font-normal text-slate-400"> (you)</span>}{s.designation && <span className="block text-xs font-normal text-slate-500">{s.designation}</span>}</span></span></Td>
                 <Td><Badge tone={ROLE_TONE[s.role as keyof typeof ROLE_TONE] ?? 'slate'}>{s.role[0].toUpperCase() + s.role.slice(1)}</Badge></Td>
                 <Td><div className="text-ink">{s.email}</div><div className="text-xs text-slate-500 tabular-nums">{s.mobile}</div></Td>
                 <Td className="text-slate-600 whitespace-nowrap">{fmtDate(s.created_at)}</Td>

@@ -14,7 +14,7 @@ import { checkPassword } from '../firestore/firebase-auth.ts';
 import {
   UniquenessError, ackMonitoringNotice, createClientUser, createStaffUser, getUserById, setUserStatus, updatePassword,
 } from '../firestore/users.ts';
-import { C, type AccessGrantDoc, type ClientGroupDoc, type CompanyDoc, type TaskDoc, type UserDoc } from '../firestore/types.ts';
+import { C, type AccessGrantDoc, type ClientGroupDoc, type CompanyDoc, type DesignationDoc, type TaskDoc, type UserDoc } from '../firestore/types.ts';
 import { OPEN_STATUSES } from '../firestore/tasks.ts';
 
 export const adminRouter = Router();
@@ -25,10 +25,15 @@ const duplicate = (e: unknown, msg: string) => { if (e instanceof UniquenessErro
 
 adminRouter.get('/users', requireRole('director', 'manager', 'employee'), h(async (req, res) => {
   const ROLE_ORDER = ['director', 'employee', 'manager']; // alphabetical, as the SQLite build sorts
+  const titles = new Map((await query<DesignationDoc>(C.designations)).map((d) => [d.id, d.name]));
   const rows = (await query<UserDoc>(C.users))
     .filter((u) => u.role !== 'client' && (req.user!.role === 'director' || u.status === 'active'))
     .sort((a, b) => ROLE_ORDER.indexOf(a.role) - ROLE_ORDER.indexOf(b.role) || a.name.localeCompare(b.name))
-    .map(({ id, role, name, email, mobile, status, created_at, client_ids }) => ({ id, role, name, email, mobile, status, created_at, ...(req.user!.role === 'director' && { client_ids: client_ids ?? [] }) }));
+    .map(({ id, role, name, email, mobile, status, created_at, client_ids, designation_id }) => ({
+      id, role, name, email, mobile, status, created_at,
+      designation_id: designation_id ?? null, designation: (designation_id && titles.get(designation_id)) || null,
+      ...(req.user!.role === 'director' && { client_ids: client_ids ?? [] }),
+    }));
   // Employees only need to name a client's relationship manager.
   if (req.user!.role === 'employee') {
     return res.json(rows.filter((u) => u.role !== 'employee').map(({ id, role, name, status }) => ({ id, role, name, status })));

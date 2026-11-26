@@ -31,7 +31,7 @@ const NAV: { group: string; items: NavItem[] }[] = [
     items: [
       { to: '/team', label: 'Team', icon: Users, roles: ['director', 'manager'] },
       { to: '/tally', label: 'Tally sync', icon: RefreshCcw, roles: ['director', 'manager'] },
-      { to: '/master', label: 'Client master', icon: Tags, roles: ['director'] },
+      { to: '/master', label: 'Masters', icon: Tags, roles: ['director'] },
       { to: '/audit', label: 'Audit trail', icon: History, roles: ['director'] },
     ],
   },

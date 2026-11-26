@@ -21,6 +21,7 @@ export const C = {
   breachRegister: 'breach_register',
   workTypes: 'work_types',
   clientSets: 'client_sets',
+  designations: 'designations',
 } as const;
 
 export type Role = 'director' | 'manager' | 'employee' | 'client';
@@ -29,6 +30,8 @@ export interface ClientGroupDoc { id: string; name: string; created_at: string; 
 
 /** Kinds of work the firm does for a client (GST, Audit, ...), which the director ticks per client. */
 export interface WorkTypeDoc { id: string; name: string; sort: number }
+/** Staff titles (Senior Accountant, Article Assistant, ...), set by the director. A label only: rights come from the role. */
+export interface DesignationDoc { id: string; name: string; created_at: string }
 
 /** A named set of clients the director gives to staff. Not the client's own owner group (ClientGroupDoc). */
 export interface ClientSetDoc { id: string; name: string; company_ids: string[]; member_ids: string[]; created_at: string; created_by: string }
@@ -65,6 +68,7 @@ export interface UserDoc {
   updated_at: string;
   /** Employees: clients the director ticked for them in the client master. */
   client_ids?: string[];
+  designation_id?: string | null;
 }
 
 export interface SessionDoc {
