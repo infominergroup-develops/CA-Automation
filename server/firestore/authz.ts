@@ -21,15 +21,8 @@ export function companyScope(u: SessionUser): Promise<string[] | null> {
 async function computeScope(u: SessionUser): Promise<string[] | null> {
   switch (u.role) {
     case 'director':
+    case 'manager': // managers see every client too; approving and deleting stay with the task's reviewer and directors
       return null;
-    case 'manager': {
-      const [own, reviewing, created] = await Promise.all([
-        query<CompanyDoc>(C.companies, { where: [['manager_id', '==', u.id]] }),
-        query<TaskDoc>(C.tasks, { where: [['reviewer_id', '==', u.id]] }),
-        query<TaskDoc>(C.tasks, { where: [['created_by', '==', u.id]] }),
-      ]);
-      return [...new Set([...own.map((c) => c.id), ...reviewing.map((t) => t.company_id), ...created.map((t) => t.company_id)])];
-    }
     case 'employee': {
       const [tasks, added] = await Promise.all([
         query<TaskDoc>(C.tasks, { where: [['assignee_id', '==', u.id]] }),

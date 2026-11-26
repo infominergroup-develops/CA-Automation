@@ -28,7 +28,7 @@ export function Clients() {
   const shown = rows?.filter((c) => `${c.legal_name} ${c.group_name} ${c.gstin ?? ''} ${c.pan ?? ''}`.toLowerCase().includes(q.toLowerCase()));
   return (
     <>
-      <PageHeader title="Clients" subtitle={employee ? 'Clients you added or have an open task for.' : u.role === 'manager' ? 'Clients you manage or have tasks for.' : 'Every client company of the firm.'}
+      <PageHeader title="Clients" subtitle={employee ? 'Clients you added or have an open task for.' : 'Every client company of the firm.'}
         actions={<Button icon={Plus} onClick={() => setAdding(true)}>New client</Button>} />
       <Card padded={false} title={`${rows?.length ?? '–'} companies`} actions={
         <div className="relative">

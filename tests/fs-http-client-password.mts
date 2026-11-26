@@ -79,7 +79,10 @@ try {
   check('download still works', (await dir.get(`/api/documents/${up.data[0].id}/download`)).status === 200);
 
   // Firm resets the client's password
-  check('manager outside the client: 404', (await mgr.login('staff', 'a@firm.test', PW), (await mgr.post(`/api/users/${userId}/password`, { password: 'newclient123' })).status === 404));
+  await mgr.login('staff', 'a@firm.test', PW);
+  const emp0 = browser(); await emp0.login('staff', 'd@firm.test', PW);
+  check('an employee cannot reset a client password', (await emp0.post(`/api/users/${userId}/password`, { password: 'newclient123' })).status === 403);
+  check('a manager sees a client they do not manage', (await mgr.get('/api/companies')).data.some((c: any) => c.id === companyId));
   check('weak reset refused', (await dir.post(`/api/users/${userId}/password`, { password: 'short' })).status === 400);
   check('cannot set a staff password this way', (await dir.post(`/api/users/${(await dir.get('/api/auth/me')).data.user.id}/password`, { password: 'newclient123' })).status === 404);
   check('director resets the client password', (await dir.post(`/api/users/${userId}/password`, { password: 'newclient123' })).status === 200);

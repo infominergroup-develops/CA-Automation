@@ -12,12 +12,8 @@ const OPEN_TASK = `status NOT IN ('approved','cancelled')`;
 export function companyScope(u: SessionUser): string[] | null {
   switch (u.role) {
     case 'director':
+    case 'manager': // managers see every client too; approving and deleting stay with the task's reviewer and directors
       return null;
-    case 'manager':
-      return all<{ id: string }>(
-        `SELECT id FROM companies WHERE manager_id = ?
-         UNION SELECT company_id FROM tasks WHERE reviewer_id = ? OR created_by = ?`,
-        [u.id, u.id, u.id]).map((r) => r.id);
     case 'employee':
       return all<{ company_id: string }>(
         `SELECT company_id FROM tasks WHERE assignee_id = ? AND ${OPEN_TASK}

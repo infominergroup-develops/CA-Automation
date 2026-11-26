@@ -110,8 +110,8 @@ try {
 
   // --- Manager scope ---
   check('manager signs in', (await mgr.staff('a@firm.test', '9000000002')).status === 200);
-  check('manager sees only their company', (await mgr.get('/api/companies')).data.length === 1);
-  check('manager: other company is 404', (await mgr.get(`/api/companies/${other.data.companyId}`)).status === 404);
+  check('manager sees every client', (await mgr.get('/api/companies')).data.length === 3);
+  check('manager opens a client they do not manage', (await mgr.get(`/api/companies/${other.data.companyId}`)).status === 200);
   check('manager cannot add a director', (await mgr.post('/api/users', { name: 'Yash', role: 'director', email: 'y@firm.test', mobile: '9000000008', password: 'longenough123' })).status === 403);
 
   // --- Documents ---
