@@ -428,21 +428,47 @@ function UploadZone({ companyId, cats, at, onDone, onNewFolder }: { companyId: s
 // Phones whose browser has no built-in PDF viewer (Chrome on Android) would show an empty box, so they get the download.
 const viewKind = (mime: string) =>
   mime === 'application/pdf' ? (navigator.pdfViewerEnabled === false ? null : 'pdf') : ['image/jpeg', 'image/png', 'image/webp'].includes(mime) ? 'image'
-    : mime === 'text/csv' ? 'csv' : mime === 'text/plain' ? 'text' : null;
+    : mime === 'text/csv' ? 'csv' : mime === 'text/plain' ? 'text'
+      : mime.includes('spreadsheetml') || mime === 'application/vnd.ms-excel' ? 'sheet'
+        : mime.includes('wordprocessingml') ? 'word' : null;
+
+const MAX_ROWS = 1000, MAX_COLS = 60;
+
+/** Sheets as rows of displayed text (as Excel shows them), at most MAX_ROWS each. Loaded only when needed. */
+async function readSheets(b: Blob) {
+  const XLSX = await import('xlsx');
+  const wb = XLSX.read(await b.arrayBuffer(), { type: 'array', sheetRows: MAX_ROWS + 1, cellFormula: false, cellHTML: false });
+  return wb.SheetNames.map((name) => ({
+    name, rows: XLSX.utils.sheet_to_json<string[]>(wb.Sheets[name], { header: 1, raw: false, defval: '', blankrows: false }),
+  }));
+}
+
+/** A Word file as a page of HTML. It is shown in a sandboxed frame, so nothing in it can run. */
+async function readWord(b: Blob) {
+  const { convertToHtml } = await import('mammoth');
+  const { value: raw } = await convertToHtml({ arrayBuffer: await b.arrayBuffer() });
+  // Belt and braces: links that are not web, mail or in-page are dropped (the sandbox already stops scripts).
+  const value = raw.replace(/\shref="(?!https?:|mailto:|#)[^"]*"/gi, '');
+  return `<!doctype html><meta charset="utf-8"><style>body{font:14px/1.6 system-ui,sans-serif;color:#0f172a;max-width:800px;margin:24px auto;padding:0 24px}
+table{border-collapse:collapse}td,th{border:1px solid #cbd5e1;padding:4px 8px}img{max-width:100%}</style>${value}`;
+}
 
 /** Shows a file inside the portal, with previous/next through the files listed. Each opening is recorded as a view. */
 function FileViewer({ docs, index, onIndex, onClose, onDownload }: { docs: Doc[]; index: number; onIndex: (i: number) => void; onClose: () => void; onDownload: (d: Doc) => void }) {
   const d = docs[index];
   const kind = viewKind(d.mime);
-  const [shown, setShown] = useState<{ id: string; url?: string; text?: string; error?: string }>();
+  const [shown, setShown] = useState<{ id: string; url?: string; text?: string; html?: string; sheets?: { name: string; rows: string[][] }[]; error?: string }>();
+  const [sheet, setSheet] = useState(0);
   useEffect(() => {
     if (!kind) return;
     let live = true, url = '';
     fetchBlob(`/documents/${d.id}/download?view=1`).then(async (b) => {
       if (!live) return;
       if (kind === 'csv' || kind === 'text') setShown({ id: d.id, text: await b.text() });
+      else if (kind === 'sheet') { const sheets = await readSheets(b); if (live) { setSheet(0); setShown({ id: d.id, sheets }); } }
+      else if (kind === 'word') { const html = await readWord(b); if (live) setShown({ id: d.id, html }); }
       else { url = URL.createObjectURL(new Blob([b], { type: d.mime })); setShown({ id: d.id, url }); }
-    }, (e: Error) => live && setShown({ id: d.id, error: e.message }));
+    }).catch((e: Error) => live && setShown({ id: d.id, error: kind === 'sheet' || kind === 'word' ? 'This file could not be read. Download it to open it in Excel or Word.' : e.message }));
     return () => { live = false; if (url) URL.revokeObjectURL(url); };
   }, [d.id, d.mime, kind]);
   useEffect(() => {
@@ -455,7 +481,7 @@ function FileViewer({ docs, index, onIndex, onClose, onDownload }: { docs: Doc[]
   }, [index, docs.length, onIndex]);
   const ready = shown?.id === d.id ? shown : undefined;
   const box = 'h-[70dvh] rounded-xl ring-1 ring-ink/10 bg-slate-50';
-  const rows = kind === 'csv' && ready?.text !== undefined ? parseCsv(ready.text) : [];
+  const rows = kind === 'csv' && ready?.text !== undefined ? parseCsv(ready.text) : ready?.sheets?.[sheet]?.rows ?? [];
   return (
     <Modal wide="full" title={d.original_name} onClose={onClose}
       description={<>FY {d.fy} / {d.category}{d.month ? ` / ${monthName(d.month)}` : ''} · {fmtSize(d.size)}</>}
@@ -471,7 +497,7 @@ function FileViewer({ docs, index, onIndex, onClose, onDownload }: { docs: Doc[]
         <div className={`${box} grid place-items-center`}>
           <EmptyState icon={FileText} title="This file cannot be shown here">
             {d.mime === 'application/pdf' ? 'This browser cannot show PDFs inside a page. Download it to open it.'
-              : 'PDFs, photos, CSV and text files open in the portal. Download this one to open it in Excel, Word or another program.'}
+              : 'PDFs, photos, Excel, Word (.docx), CSV and text files open in the portal. Download this one to open it in its own program.'}
           </EmptyState>
         </div>
       ) : ready?.error ? <ErrorText error={new Error(ready.error)} />
@@ -479,18 +505,28 @@ function FileViewer({ docs, index, onIndex, onClose, onDownload }: { docs: Doc[]
           : kind === 'pdf' ? <iframe src={ready.url} title={d.original_name} className={`${box} w-full bg-white`} />
             : kind === 'image' ? (
               <div className={`${box} grid place-items-center overflow-auto`}><img src={ready.url} alt={d.original_name} className="max-w-full max-h-full object-contain" /></div>
-            ) : kind === 'csv' ? (
+            ) : kind === 'word' ? <iframe sandbox="" srcDoc={ready.html} title={d.original_name} className={`${box} w-full bg-white`} />
+            : kind === 'csv' || kind === 'sheet' ? (
               <div className={`${box} overflow-auto bg-white`}>
+                {ready.sheets && ready.sheets.length > 1 && (
+                  <div role="tablist" aria-label="Sheets" className="sticky left-0 top-0 z-10 flex gap-1 overflow-x-auto bg-white border-b border-line p-2">
+                    {ready.sheets.map((sh, i) => (
+                      <button key={sh.name} type="button" role="tab" aria-selected={i === sheet} onClick={() => setSheet(i)}
+                        className={`shrink-0 rounded-full px-3 h-7 text-xs font-medium ${i === sheet ? 'bg-ink text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}>{sh.name}</button>
+                    ))}
+                  </div>
+                )}
+                {!rows.length && <p className="p-4 text-sm text-slate-500">This sheet is empty.</p>}
                 <table className="text-xs tabular-nums border-collapse">
                   <tbody>
                     {rows.map((r, i) => (
                       <tr key={i} className={i === 0 ? 'bg-slate-100 font-semibold sticky top-0' : 'odd:bg-slate-50/60'}>
-                        {r.map((c, j) => <td key={j} className="border border-line px-2 py-1 whitespace-nowrap">{c}</td>)}
+                        {r.slice(0, MAX_COLS).map((c, j) => <td key={j} className="border border-line px-2 py-1 whitespace-nowrap">{c}</td>)}
                       </tr>
                     ))}
                   </tbody>
                 </table>
-                {rows.length >= 1000 && <p className="p-3 text-xs text-slate-500">Showing the first 1,000 rows. Download the file for the rest.</p>}
+                {(rows.length >= MAX_ROWS || rows.some((r) => r.length > MAX_COLS)) && <p className="p-3 text-xs text-slate-500">Showing the first 1,000 rows and 60 columns. Download the file for the rest.</p>}
               </div>
             ) : <pre className={`${box} overflow-auto p-4 text-xs whitespace-pre-wrap break-words bg-white`}>{ready.text}</pre>}
     </Modal>
