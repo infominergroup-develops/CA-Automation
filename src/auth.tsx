@@ -10,7 +10,7 @@ export interface Me {
   noticeVersion?: string;
   firmName?: string;
   /** Absent on servers that have every feature. */
-  features?: { tally?: boolean };
+  features?: { tally?: boolean; clientMaster?: boolean };
   /** Clients sign in with a firm-set password (one-time codes are off). */
   clientPassword?: boolean;
 }
@@ -56,6 +56,8 @@ export const useAuth = () => useContext(Ctx);
 export const useUser = () => useContext(Ctx).me!.user!;
 /** Tally sync and reports, unless the server says they are not available. */
 export const useHasTally = () => useContext(Ctx).me?.features?.tally !== false;
+/** The director's client master (work types, client groups, employee access); on the Firestore server only. */
+export const useHasClientMaster = () => useContext(Ctx).me?.features?.clientMaster === true;
 export const useClientPassword = () => useContext(Ctx).me?.clientPassword === true;
 export const isStaff = (r: Role) => r !== 'client';
 export const isManagerial = (r: Role) => r === 'director' || r === 'manager';

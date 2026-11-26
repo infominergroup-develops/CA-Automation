@@ -2,11 +2,11 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 're
 import { gsap } from 'gsap';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
-  LayoutDashboard, Building2, ListChecks, ClipboardCheck, Timer, Users, History, ShieldCheck, LogOut, Square, Menu, X, FileText, Lock, BarChart3, RefreshCcw,
+  LayoutDashboard, Building2, ListChecks, ClipboardCheck, Timer, Users, History, ShieldCheck, LogOut, Square, Menu, X, FileText, Lock, BarChart3, RefreshCcw, Tags,
   type LucideIcon,
 } from 'lucide-react';
 import { api } from '../api';
-import { useAuth, useHasTally, type Role } from '../auth';
+import { useAuth, useHasClientMaster, useHasTally, type Role } from '../auth';
 import { InfominerLogo } from './InfominerLogo';
 import { Avatar } from './ui';
 import { prefersReducedMotion } from '../motion';
@@ -31,6 +31,7 @@ const NAV: { group: string; items: NavItem[] }[] = [
     items: [
       { to: '/team', label: 'Team', icon: Users, roles: ['director', 'manager'] },
       { to: '/tally', label: 'Tally sync', icon: RefreshCcw, roles: ['director', 'manager'] },
+      { to: '/master', label: 'Client master', icon: Tags, roles: ['director'] },
       { to: '/audit', label: 'Audit trail', icon: History, roles: ['director'] },
     ],
   },
@@ -88,6 +89,7 @@ export function Layout({ children }: { children: ReactNode }) {
   const running = useTimer(u.role !== 'client');
   const reviewCount = useReviewCount(u.role === 'director' || u.role === 'manager');
   const hasTally = useHasTally();
+  const hasMaster = useHasClientMaster();
 
   useEffect(() => setOpen(false), [pathname]);
 
@@ -118,7 +120,7 @@ export function Layout({ children }: { children: ReactNode }) {
       <nav ref={navRef} className="relative flex-1 overflow-y-auto px-3 pb-4 space-y-6" aria-label="Main">
         <span ref={pill} aria-hidden className="pointer-events-none absolute left-3 right-3 top-0 rounded-xl bg-gradient-to-r from-brand-50 to-white ring-1 ring-brand-200/70 shadow-[0_4px_14px_-8px_rgb(235_138_35/0.6)] opacity-0" />
         {NAV.map((g) => {
-          const items = g.items.filter((i) => i.roles.includes(u.role) && (hasTally || !['/tally', '/reports'].includes(i.to)));
+          const items = g.items.filter((i) => i.roles.includes(u.role) && (hasTally || !['/tally', '/reports'].includes(i.to)) && (hasMaster || i.to !== '/master'));
           if (!items.length) return null;
           return (
             <div key={g.group}>

@@ -15,6 +15,7 @@ import { TallySync } from './pages/Tally';
 import { TaskDetail, Tasks } from './pages/Tasks';
 import { Team } from './pages/Team';
 import { Time } from './pages/Time';
+import { ClientMaster } from './pages/Master';
 
 /** The authenticated area: shows the sign-in / consent gates, or the app inside its Layout. */
 function Gate() {
@@ -52,6 +53,7 @@ export function App() {
         <Route path="/reports" element={only(['client'], <ClientReports />)} />
         <Route path="/tally" element={only(['director', 'manager'], <TallySync />)} />
         <Route path="/audit" element={only(['director'], <Audit />)} />
+        <Route path="/master" element={only(['director'], <ClientMaster />)} />
         <Route path="/privacy" element={<Privacy />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

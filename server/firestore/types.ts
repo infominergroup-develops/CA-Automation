@@ -19,11 +19,19 @@ export const C = {
   timeEntries: 'time_entries',
   dpdpRequests: 'dpdp_requests',
   breachRegister: 'breach_register',
+  workTypes: 'work_types',
+  clientSets: 'client_sets',
 } as const;
 
 export type Role = 'director' | 'manager' | 'employee' | 'client';
 
 export interface ClientGroupDoc { id: string; name: string; created_at: string; created_by: string | null }
+
+/** Kinds of work the firm does for a client (GST, Audit, ...), which the director ticks per client. */
+export interface WorkTypeDoc { id: string; name: string; sort: number }
+
+/** A named set of clients the director gives to staff. Not the client's own owner group (ClientGroupDoc). */
+export interface ClientSetDoc { id: string; name: string; company_ids: string[]; member_ids: string[]; created_at: string; created_by: string }
 
 export interface CompanyDoc {
   id: string;
@@ -35,6 +43,8 @@ export interface CompanyDoc {
   manager_id: string | null;
   created_at: string;
   created_by: string | null;
+  /** Work type ids from the client master. */
+  work_types?: string[];
 }
 
 export interface UserDoc {
@@ -53,6 +63,8 @@ export interface UserDoc {
   created_at: string;
   created_by: string | null;
   updated_at: string;
+  /** Employees: clients the director ticked for them in the client master. */
+  client_ids?: string[];
 }
 
 export interface SessionDoc {

@@ -28,7 +28,7 @@ adminRouter.get('/users', requireRole('director', 'manager', 'employee'), h(asyn
   const rows = (await query<UserDoc>(C.users))
     .filter((u) => u.role !== 'client' && (req.user!.role === 'director' || u.status === 'active'))
     .sort((a, b) => ROLE_ORDER.indexOf(a.role) - ROLE_ORDER.indexOf(b.role) || a.name.localeCompare(b.name))
-    .map(({ id, role, name, email, mobile, status, created_at }) => ({ id, role, name, email, mobile, status, created_at }));
+    .map(({ id, role, name, email, mobile, status, created_at, client_ids }) => ({ id, role, name, email, mobile, status, created_at, ...(req.user!.role === 'director' && { client_ids: client_ids ?? [] }) }));
   // Employees only need to name a client's relationship manager.
   if (req.user!.role === 'employee') {
     return res.json(rows.filter((u) => u.role !== 'employee').map(({ id, role, name, status }) => ({ id, role, name, status })));
@@ -216,7 +216,7 @@ adminRouter.get('/companies', requireAuth, h(async (req, res) => {
     .sort((a, b) => a.group_name.localeCompare(b.group_name) || a.legal_name.localeCompare(b.legal_name));
   // Clients and employees do not need internal fields.
   if (u.role === 'client' || u.role === 'employee') {
-    return res.json(visible.map(({ id, legal_name, group_name, gstin }) => ({ id, legal_name, group_name, gstin })));
+    return res.json(visible.map(({ id, legal_name, group_name, gstin, work_types }) => ({ id, legal_name, group_name, gstin, ...(u.role === 'employee' && { work_types: work_types ?? [] }) })));
   }
   const [users, pendingDocs, openTasks] = await Promise.all([
     userNames(),
@@ -227,7 +227,7 @@ adminRouter.get('/companies', requireAuth, h(async (req, res) => {
   res.json(visible.map((c) => ({
     id: c.id, legal_name: c.legal_name, pan: c.pan, gstin: c.gstin, tally_name: c.tally_name, group_id: c.group_id,
     group_name: c.group_name, manager_id: c.manager_id, manager_name: c.manager_id ? users.get(c.manager_id)?.name ?? null : null,
-    pending_docs: count(pendingDocs, c.id), open_tasks: count(openTasks, c.id),
+    pending_docs: count(pendingDocs, c.id), open_tasks: count(openTasks, c.id), work_types: c.work_types ?? [],
   })));
 }));
 

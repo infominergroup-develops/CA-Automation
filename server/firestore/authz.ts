@@ -1,7 +1,7 @@
 import { HttpError, type SessionUser } from './http.ts';
 import { getById, query } from './store.ts';
 import { OPEN_STATUSES, getTask } from './tasks.ts';
-import { C, type CompanyDoc, type TaskDoc, type UserDoc } from './types.ts';
+import { C, type ClientSetDoc, type CompanyDoc, type TaskDoc, type UserDoc } from './types.ts';
 
 /**
  * Every data route goes through these checks (same rules as server/authz.ts). The UI hides what a user
@@ -24,11 +24,17 @@ async function computeScope(u: SessionUser): Promise<string[] | null> {
     case 'manager': // managers see every client too; approving and deleting stay with the task's reviewer and directors
       return null;
     case 'employee': {
-      const [tasks, added] = await Promise.all([
+      // Open tasks and clients they added, plus what the director gave them in the client master: ticks and groups.
+      const [tasks, added, me, sets] = await Promise.all([
         query<TaskDoc>(C.tasks, { where: [['assignee_id', '==', u.id]] }),
         query<CompanyDoc>(C.companies, { where: [['created_by', '==', u.id]] }),
+        getById<UserDoc>(C.users, u.id),
+        query<ClientSetDoc>(C.clientSets, { where: [['member_ids', 'array-contains', u.id]] }),
       ]);
-      return [...new Set([...tasks.filter((t) => OPEN_STATUSES.includes(t.status)).map((t) => t.company_id), ...added.map((c) => c.id)])];
+      return [...new Set([
+        ...tasks.filter((t) => OPEN_STATUSES.includes(t.status)).map((t) => t.company_id), ...added.map((c) => c.id),
+        ...(me?.client_ids ?? []), ...sets.flatMap((s) => s.company_ids),
+      ])];
     }
     case 'client':
       return (await query<CompanyDoc>(C.companies, { where: [['group_id', '==', u.client_group_id ?? '']] })).map((c) => c.id);

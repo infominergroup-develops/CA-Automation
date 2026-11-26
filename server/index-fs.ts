@@ -24,11 +24,13 @@ await loadSecretsIntoEnv();
 const { config } = await import('./config.ts');
 const { createApp } = await import('./firestore/app.ts');
 const { ensureCategories } = await import('./firestore/documents.ts');
+const { ensureWorkTypes } = await import('./routes-fs/master.ts');
 const { sweepStaleTimers } = await import('./firestore/time.ts');
 const { purgeExpiredChallenges } = await import('./firestore/challenges.ts');
 const { purgeExpiredSessions } = await import('./firestore/sessions.ts');
 
 await ensureCategories(); // adds any document type introduced by this version
+await ensureWorkTypes();
 
 setInterval(() => {
   Promise.all([sweepStaleTimers(), purgeExpiredChallenges(), purgeExpiredSessions()])

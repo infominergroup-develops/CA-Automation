@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { Building2, ChevronRight, ClipboardList, Plus, Search, Send, UserPlus, Users } from 'lucide-react';
 import { api, fmtDate } from '../api';
-import { useClientPassword, useHasTally, useUser } from '../auth';
+import { useClientPassword, useHasClientMaster, useHasTally, useUser } from '../auth';
 import { DocumentsPanel } from '../components/DocumentsPanel';
 import { ReportsPanel } from './Reports';
 import {
@@ -13,29 +13,40 @@ import { TaskForm, TaskTable, type TaskRow } from './Tasks';
 
 interface Company {
   id: string; legal_name: string; pan: string | null; gstin: string | null; tally_name: string | null; group_id: string;
-  group_name: string; manager_name: string | null; pending_docs: number; open_tasks: number;
+  group_name: string; manager_name: string | null; pending_docs: number; open_tasks: number; work_types?: string[];
 }
 export interface StaffUser { id: string; role: string; name: string; email: string; mobile: string; status: string }
 
 export function Clients() {
   const u = useUser();
+  const hasMaster = useHasClientMaster();
   const employee = u.role === 'employee';
   const [params, setParams] = useSearchParams();
   const [rows, err, reload, loading] = useLoad(() => api<Company[]>('/companies'));
   const adding = params.get('new') === '1';
   const setAdding = (v: boolean) => setParams(v ? { new: '1' } : {});
   const [q, setQ] = useState('');
-  const shown = rows?.filter((c) => `${c.legal_name} ${c.group_name} ${c.gstin ?? ''} ${c.pan ?? ''}`.toLowerCase().includes(q.toLowerCase()));
+  const [work, setWork] = useState('');
+  const [types] = useLoad(() => (hasMaster ? api<{ id: string; name: string }[]>('/work-types') : Promise.resolve([])));
+  const workName = (id: string) => types?.find((t) => t.id === id)?.name ?? id;
+  const shown = rows?.filter((c) => `${c.legal_name} ${c.group_name} ${c.gstin ?? ''} ${c.pan ?? ''}`.toLowerCase().includes(q.toLowerCase())
+    && (!work || c.work_types?.includes(work)));
   return (
     <>
       <PageHeader title="Clients" subtitle={employee ? 'Clients you added or have an open task for.' : 'Every client company of the firm.'}
         actions={<Button icon={Plus} onClick={() => setAdding(true)}>New client</Button>} />
-      <Card padded={false} title={`${rows?.length ?? '–'} companies`} actions={
+      <Card padded={false} title={`${rows?.length ?? '–'} companies`} actions={<>
         <div className="relative">
           <Search className="size-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" aria-hidden />
           <Input placeholder="Search name, GSTIN or PAN" aria-label="Search clients" value={q} onChange={(e) => setQ(e.target.value)} className="pl-9 w-64! h-9!" />
         </div>
-      }>
+        {!!types?.length && (
+          <Select value={work} onChange={(e) => setWork(e.target.value)} aria-label="Filter by work" className="w-auto! h-9!">
+            <option value="">All work</option>
+            {types.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+          </Select>
+        )}
+      </>}>
         {err ? <div className="p-5"><ErrorText error={err} /></div> : loading && !rows ? <div className="p-5"><LoadingRows /></div> : !shown?.length ? (
           <EmptyState icon={Building2} title={q ? 'No clients match' : 'No clients yet'} action={!q && <Button icon={Plus} onClick={() => setAdding(true)}>Add your first client</Button>}>
             {q ? 'Try a different name, GSTIN or PAN.' : 'Add a client to start collecting documents and assigning work.'}
@@ -49,6 +60,7 @@ export function Clients() {
                     <Td>
                       <Link to={`/company/${c.id}`} className="font-semibold text-ink hover:text-brand-700">{c.legal_name}</Link>
                       <div className="text-xs text-slate-500">{c.group_name}</div>
+                      {!!c.work_types?.length && <div className="flex flex-wrap gap-1 mt-1">{c.work_types.map((w) => <Badge key={w} tone="slate">{workName(w)}</Badge>)}</div>}
                     </Td>
                     <Td className="font-mono text-xs text-slate-600">{c.gstin ?? '—'}</Td>
                     {!employee && (

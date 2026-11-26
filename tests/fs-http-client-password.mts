@@ -18,6 +18,7 @@ const check = (name: string, cond: unknown, extra: unknown = '') => { cond ? pas
 for (const c of await db.listCollections()) await db.recursiveDelete(c);
 await ensureSettingDefaults();
 await ensureCategories();
+await (await import('../server/routes-fs/master.ts')).ensureWorkTypes();
 const PW = 'correct horse 99';
 await createStaffUser({ role: 'director', name: 'Krishna', email: 'k@firm.test', mobile: '9000000001', password: PW });
 const mgrId = await createStaffUser({ role: 'manager', name: 'Ambrish', email: 'a@firm.test', mobile: '9000000002', password: PW });
@@ -43,6 +44,7 @@ function browser() {
     get: (p: string) => call('GET', p),
     post: (p: string, b: unknown = {}) => call('POST', p, b),
     patch: (p: string, b: unknown) => call('PATCH', p, b),
+    put: (p: string, b: unknown) => call('PUT', p, b),
     del: (p: string) => call('DELETE', p),
     login: (mode: string, identifier: string, password: string) => call('POST', '/api/auth/login', { mode, identifier, password }),
   };
@@ -152,6 +154,36 @@ try {
   check('old copy is gone', await blobs.get(before).then(() => false, () => true));
   check('it still downloads, unchanged', (await mgr.get(`/api/documents/${f1.data[0].id}/download`)).status === 200);
   check('the move is audited', (await dir.get('/api/audit?action=document.moved')).data.length === 1);
+
+  // Client master: work types, client groups given to staff, clients ticked per employee (director only)
+  const wt = (await dir.get('/api/work-types')).data as { id: string; name: string }[];
+  check('starting work types are there', wt.some((w) => w.name === 'GST') && wt.some((w) => w.name === 'Audit'), wt);
+  check('manager cannot change the master', (await mgr.post('/api/work-types', { name: 'Valuation' })).status === 403 && (await mgr.post('/api/client-sets', { name: 'X team' })).status === 403);
+  check('director adds a work type', (await dir.post('/api/work-types', { name: 'Valuation' })).status === 201);
+  check('duplicate work type refused', (await dir.post('/api/work-types', { name: 'valuation' })).status === 409);
+  check('director tags a client', (await dir.put(`/api/companies/${gupta}/work-types`, { work_types: ['gst', 'valuation'] })).status === 200);
+  check('unknown work type refused', (await dir.put(`/api/companies/${gupta}/work-types`, { work_types: ['nope'] })).status === 400);
+  check('clients list carries work types', (await mgr.get('/api/companies')).data.find((c: any) => c.id === gupta)?.work_types.join() === 'gst,valuation');
+  check('removing a work type untags clients', (await dir.del('/api/work-types/valuation')).status === 200 && (await mgr.get('/api/companies')).data.find((c: any) => c.id === gupta)?.work_types.join() === 'gst');
+  // Vivek (emp2) cannot see Mehta Traders (companyId) until given it
+  const mehtaDocs = `/api/companies/${companyId}/documents`;
+  check('employee starts without the client', (await emp2.get(mehtaDocs)).status === 404);
+  const set = await dir.post('/api/client-sets', { name: 'North team' });
+  check('director makes a named group', set.status === 201 && set.data.name === 'North team');
+  check('a client in a group cannot be unknown', (await dir.put(`/api/client-sets/${set.data.id}`, { company_ids: ['00000000-0000-4000-8000-000000000000'] })).status === 400);
+  check('only staff can be given a group', (await dir.put(`/api/client-sets/${set.data.id}`, { member_ids: [userId] })).status === 400);
+  const vivek = (await dir.get('/api/users')).data.find((u: any) => u.name === 'Vivek').id;
+  check('group gives its clients', (await dir.put(`/api/client-sets/${set.data.id}`, { company_ids: [companyId], member_ids: [vivek] })).status === 200);
+  const vd = await emp2.get(mehtaDocs);
+  check('group member now sees the client and its files', vd.status === 200 && vd.data.length >= 1 && (await emp2.get('/api/companies')).data.some((c: any) => c.id === companyId), vd.data);
+  check('group member still cannot delete', (await emp2.del(`/api/documents/${vd.data[0].id}`)).status === 403);
+  check('removed from the group: access ends', (await dir.put(`/api/client-sets/${set.data.id}`, { member_ids: [] })).status === 200 && (await emp2.get(mehtaDocs)).status === 404);
+  check('director ticks a client for an employee', (await dir.put(`/api/users/${vivek}/clients`, { company_ids: [companyId] })).status === 200 && (await emp2.get(mehtaDocs)).status === 200);
+  check('director sees the ticks', (await dir.get('/api/users')).data.find((u: any) => u.id === vivek).client_ids.join() === companyId);
+  check('ticks only for employees', (await dir.put(`/api/users/${mgrId}/clients`, { company_ids: [] })).status === 404);
+  check('unticked: access ends', (await dir.put(`/api/users/${vivek}/clients`, { company_ids: [] })).status === 200 && (await emp2.get(mehtaDocs)).status === 404);
+  check('deleting a group', (await dir.del(`/api/client-sets/${set.data.id}`)).status === 200 && (await dir.get('/api/client-sets')).data.length === 0);
+  check('master changes are audited', (await dir.get('/api/audit?action=client_set.')).data.length >= 3);
 } catch (e) {
   fail++; console.error(e);
 } finally {
