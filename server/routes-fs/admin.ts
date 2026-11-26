@@ -9,7 +9,7 @@ import { HttpError, auditReq, h, parse, requireAuth, requireRole, type SessionUs
 import { endAllSessions } from '../firestore/sessions.ts';
 import { getSettings, setSetting } from '../firestore/settings.ts';
 import { getById, newId, now, query } from '../firestore/store.ts';
-import { listCategories, segment, type DocumentDoc } from '../firestore/documents.ts';
+import { FolderExistsError, addCategory, listCategories, segment, type DocumentDoc } from '../firestore/documents.ts';
 import { checkPassword } from '../firestore/firebase-auth.ts';
 import {
   UniquenessError, ackMonitoringNotice, createClientUser, createStaffUser, getUserById, setUserStatus, updatePassword,
@@ -242,6 +242,14 @@ adminRouter.get('/companies/:id', requireRole('director', 'manager'), h(async (r
     company: { ...c, group_name: group?.name ?? '', manager_name: manager?.name ?? null },
     contacts: contacts.sort((a, b) => a.name.localeCompare(b.name)).map(({ id, name, mobile, email, status }) => ({ id, name, mobile, email, status })),
   });
+}));
+
+/** A new document folder for every client, such as Bookkeeping. */
+adminRouter.post('/categories', requireRole('director', 'manager'), h(async (req, res) => {
+  const { name } = parse(z.object({ name: zText(60).min(2) }), req.body);
+  const cat = await addCategory(name).catch((e) => { throw e instanceof FolderExistsError ? new HttpError(409, e.message) : e; });
+  await auditReq(req, { action: 'category.created', objectType: 'category', objectId: cat.id, details: { name } });
+  res.status(201).json({ id: cat.id, name: cat.name });
 }));
 
 adminRouter.get('/categories', requireAuth, h(async (_req, res) => {

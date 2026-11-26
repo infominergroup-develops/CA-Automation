@@ -1,5 +1,5 @@
 /** Where a file goes: folder (category id), financial year, month ('' = none) and any inner folders to keep. */
-export interface Place { category: string; fy: string; month: string; sub: string }
+export interface Place { category: string; fy: string; month: string; sub: string; /** An unknown folder name that looks like a document type, e.g. Bookkeeping. */ newFolder?: string }
 
 const MONTH_NAMES = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
 // Common short names for folders that share no first word with ours.
@@ -33,14 +33,21 @@ export function placeFile(path: string, fixed: Partial<Place>, chosen: Omit<Plac
   const rest: string[] = [];
   const dirs = path.split('/').slice(0, -1);
   let wrapper = false; // the top folder has a name that means nothing to us, such as the client's
-  dirs.forEach((dir, i) => {
+  const kinds = dirs.map((dir) => {
     const guesses = { fy: readFy(dir), month: readMonth(dir), category: readCategory(dir, cats) };
-    const key = (['fy', 'month', 'category'] as const).find((k) => guesses[k]);
+    return { guesses, key: (['fy', 'month', 'category'] as const).find((k) => guesses[k]) };
+  });
+  dirs.forEach((dir, i) => {
+    const { guesses, key } = kinds[i];
     if (i === 0 && !key) wrapper = true;
     if (key && fixed[key] === guesses[key]) return; // it names the folder already open
     if (key && fixed[key] === undefined && found[key] === undefined) found[key] = guesses[key];
     else rest.push(dir);
   });
   if (wrapper && Object.keys(found).length) rest.shift();
-  return { ...chosen, ...found, ...fixed, sub: rest.join('/') };
+  // Laid out as year / type / month: an unknown name right after the year (or at the top, inside an open year) is a type.
+  const afterYear = kinds.findIndex((k) => k.key === 'fy');
+  const candidate = fixed.category || found.category ? -1 : afterYear >= 0 ? afterYear + 1 : fixed.fy ? 0 : -1;
+  const newFolder = candidate >= 0 && candidate < dirs.length && !kinds[candidate].key ? dirs[candidate] : undefined;
+  return { ...chosen, ...found, ...fixed, sub: rest.join('/'), ...(newFolder && { newFolder }) };
 }

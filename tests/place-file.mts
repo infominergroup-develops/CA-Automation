@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { placeFile } from '../src/placeFile.ts';
 const cats = ['Bank statements', 'Registrations', 'Profit and loss', 'Sales invoices', 'GST documents', 'TDS / TCS', 'Payroll and PF/ESI', 'Income tax', 'ROC / MCA', 'Others'].map((name) => ({ id: name.toLowerCase().replace(/[^a-z0-9]+/g, '-'), name }));
 const chosen = { category: '', fy: '2026-27', month: '' };
-const at = (path: string, fixed = {}) => { const p = placeFile(path, fixed, chosen, cats); return [p.fy, p.category, p.month, p.sub].join('|'); };
+const at = (path: string, fixed = {}) => { const p = placeFile(path, fixed, chosen, cats); return [p.fy, p.category, p.month, p.sub].join('|') + (p.newFolder ? ` new:${p.newFolder}` : ''); };
 const cases: [string, string, object?][] = [
   ['a.pdf', '2026-27|||'],
   ['Mehta/FY 2025-26/Bank Statement/April/a.pdf', '2025-26|bank-statements|4|'],
@@ -14,6 +14,12 @@ const cases: [string, string, object?][] = [
   ['X/TDS/2026-04 April/a.pdf', '2026-27|tds-tcs|4|'],
   ['X/PF/Apr-26/a.pdf', '2026-27|payroll-and-pf-esi|4|'],
   ['X/roc/a.pdf', '2026-27|roc-mca||'],
+  // The firm's own layout: year / type / month, with a type the portal does not have yet
+  ['Infominer data/2025-26/Bookkeeping/April/a.pdf', '2025-26||4|Bookkeeping new:Bookkeeping'],
+  ['2025-26/Bookkeeping/a.pdf', '2025-26|||Bookkeeping new:Bookkeeping'],
+  ['Bookkeeping/May/a.pdf', '2026-27||5| new:Bookkeeping', { fy: '2026-27' }],          // inside an open year
+  ['2025-26/GST/April/a.pdf', '2025-26|gst-documents|4|'],                               // known type: nothing to create
+  ['Scans/a.pdf', '2026-27|||Scans'],                                                     // no year: not guessed
   ['Marketing/a.pdf', '2026-27|||Marketing'],              // not March
   ['2025-27/a.pdf', '2026-27|||2025-27'],                  // not a financial year
   ['Scans/HDFC/a.pdf', '2026-27|||Scans/HDFC'],            // nothing recognised: keep all

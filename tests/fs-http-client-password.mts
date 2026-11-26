@@ -128,6 +128,26 @@ try {
   check('with an open task: uploads, and sees that upload', onTask.status === 201 && (await emp.get(`/api/documents/${onTask.data[0].id}/download`)).status === 200);
   await dir.post(`/api/tasks/${task.data.id}/cancel`, { comment: 'Not needed' });
   check('when the task ends, so does access to that upload', (await emp.get(`/api/documents/${onTask.data[0].id}/download`)).status === 404);
+
+  // New folders and moving files: directors and managers only
+  check('employee cannot add a folder', (await emp.post('/api/categories', { name: 'Bookkeeping' })).status === 403);
+  const nf = await mgr.post('/api/categories', { name: 'Bookkeeping' });
+  check('manager adds a folder', nf.status === 201 && nf.data.id === 'bookkeeping', nf.data);
+  check('same folder twice is refused', (await dir.post('/api/categories', { name: 'bookkeeping!' })).status === 409);
+  const cats2 = (await emp.get('/api/categories')).data as { id: string; name: string }[];
+  check('new folder sits before Others', cats2.at(-1)!.name === 'Others' && cats2.at(-2)!.name === 'Bookkeeping', cats2.map((c) => c.name));
+  const f1 = await emp.post(G, file('ledger.pdf', 'others', 'ledger body'));
+  const before = (await getDocumentMeta(f1.data[0].id))!.blob_key;
+  check('employee cannot move a file', (await emp.post(`/api/documents/${f1.data[0].id}/move`, { fy: '2026-27', category_id: 'bookkeeping', month: 4 })).status === 403);
+  check('moving to an unknown folder is refused', (await mgr.post(`/api/documents/${f1.data[0].id}/move`, { fy: '2026-27', category_id: 'nope', month: null })).status === 400);
+  const mv = await mgr.post(`/api/documents/${f1.data[0].id}/move`, { fy: '2025-26', category_id: 'bookkeeping', month: 4 });
+  const after = (await getDocumentMeta(f1.data[0].id))!;
+  check('manager moves it', mv.status === 200 && after.fy === '2025-26' && after.category_id === 'bookkeeping' && after.month === 4, after);
+  check('the bucket file moved too', after.blob_key.startsWith('Gupta Textiles/2025-26/Bookkeeping/2025-04 April/') && after.blob_key !== before, after.blob_key);
+  const { blobs } = await import('../server/firestore/storage.ts');
+  check('old copy is gone', await blobs.get(before).then(() => false, () => true));
+  check('it still downloads, unchanged', (await mgr.get(`/api/documents/${f1.data[0].id}/download`)).status === 200);
+  check('the move is audited', (await dir.get('/api/audit?action=document.moved')).data.length === 1);
 } catch (e) {
   fail++; console.error(e);
 } finally {

@@ -1,12 +1,12 @@
 import { useRef, useState, type DragEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
-  Check, ChevronRight, Download, FileImage, FileSpreadsheet, FileText, FileArchive, Fingerprint, Folder, FolderOpen, FolderUp, RotateCcw, Search, Trash2, UploadCloud, X,
+  Check, ChevronRight, Download, FileImage, FileSpreadsheet, FileText, FileArchive, Fingerprint, Folder, FolderInput, FolderOpen, FolderPlus, FolderUp, RotateCcw, Search, Trash2, UploadCloud, X,
 } from 'lucide-react';
 import { api, currentFy, download, fmtDateTime, fmtSize, fyOptions } from '../api';
 import { useUser } from '../auth';
 import { placeFile, type Place } from '../placeFile';
-import { Button, Card, EmptyState, ErrorText, Field, IconButton, Input, LoadingRows, Select, StatusBadge, useConfirm, useLoad, useToast } from './ui';
+import { Button, Card, EmptyState, ErrorText, Field, IconButton, Input, LoadingRows, Modal, Select, StatusBadge, useConfirm, useLoad, useToast } from './ui';
 
 interface Doc {
   id: string; category_id: number; category: string; fy: string; month: number | null; original_name: string; mime: string;
@@ -37,8 +37,11 @@ export function DocumentsPanel({ companyId, canUpload = true }: { companyId: str
   const u = useUser();
   const toast = useToast();
   const confirm = useConfirm();
-  const [cats] = useLoad(() => api<Category[]>('/categories'));
+  const [cats, , reloadCats] = useLoad(() => api<Category[]>('/categories'));
   const [params, setParams] = useSearchParams();
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [moving, setMoving] = useState(false);
+  const [naming, setNaming] = useState(false);
   const fy = params.get('fy') ?? '', folder = params.get('folder') ?? '', month = params.get('month') ?? '';
   const [q, setQ] = useState('');
   const [docs, loadErr, reload, loading] = useLoad(() => api<Doc[]>(`/companies/${companyId}/documents`), [companyId]);
@@ -49,6 +52,7 @@ export function DocumentsPanel({ companyId, canUpload = true }: { companyId: str
     for (const k of ['fy', 'folder', 'month'] as const) { next.delete(k); if (to[k]) next.set(k, to[k]); }
     setParams(next);
     setQ('');
+    setPicked(new Set());
   };
 
   const attempt = async (fn: () => Promise<unknown>, ok?: string) => {
@@ -87,7 +91,7 @@ export function DocumentsPanel({ companyId, canUpload = true }: { companyId: str
 
   return (
     <div className="space-y-6">
-      {canUpload && <UploadZone key={`${fy}|${folder}|${month}`} companyId={companyId} cats={cats ?? []} at={{ fy, folder, month }} onDone={reload} />}
+      {canUpload && <UploadZone key={`${fy}|${folder}|${month}`} companyId={companyId} cats={cats ?? []} at={{ fy, folder, month }} onDone={reload} onNewFolder={managerial ? reloadCats : undefined} />}
 
       <Card title="Documents" description={u.role === 'employee' ? 'Your uploads, and the document types granted to you for an open task.' : `${docs?.length ?? '–'} files`} padded={false}
         actions={
@@ -121,7 +125,24 @@ export function DocumentsPanel({ companyId, canUpload = true }: { companyId: str
                     </button>
                   </li>
                 ))}
+                {managerial && fy && !folder && (
+                  <li>
+                    <button type="button" onClick={() => setNaming(true)} className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left border-2 border-dashed border-line text-brand-700 hover:border-brand-500 hover:bg-brand-50/40 transition-colors">
+                      <FolderPlus className="size-5 shrink-0" aria-hidden /><span className="text-sm font-semibold">New folder</span>
+                    </button>
+                  </li>
+                )}
               </ul>
+            )}
+            {managerial && !!files.length && (
+              <div className="flex flex-wrap items-center gap-3 px-5 py-2 border-b border-line text-sm">
+                <label className="flex items-center gap-2 text-slate-600">
+                  <input type="checkbox" className="size-4 accent-brand-500" checked={files.every((d) => picked.has(d.id))}
+                    onChange={(e) => setPicked(new Set(e.target.checked ? files.map((d) => d.id) : []))} />
+                  Select all
+                </label>
+                {!!picked.size && <Button size="sm" variant="secondary" icon={FolderInput} onClick={() => setMoving(true)}>Move {picked.size} file{picked.size > 1 ? 's' : ''}</Button>}
+              </div>
             )}
             {!!files.length && !!tiles.length && <p className="px-5 pb-2 text-[13px] font-semibold text-slate-500">Not for a particular month</p>}
             {!files.length && !tiles.length && (
@@ -134,6 +155,10 @@ export function DocumentsPanel({ companyId, canUpload = true }: { companyId: str
                 {files.map((d) => (
                   <li key={d.id} className="flex flex-col sm:flex-row sm:items-center gap-3 px-5 py-3.5 hover:bg-slate-50/70 transition-colors">
                     <div className="flex items-start gap-3 min-w-0 flex-1">
+                      {managerial && (
+                        <input type="checkbox" aria-label={`Select ${d.original_name}`} className="mt-3 size-4 shrink-0 accent-brand-500" checked={picked.has(d.id)}
+                          onChange={(e) => setPicked((p) => { const n = new Set(p); if (e.target.checked) n.add(d.id); else n.delete(d.id); return n; })} />
+                      )}
                       <FileIcon mime={d.mime} name={d.original_name} />
                       <div className="min-w-0">
                         <div className="text-sm font-semibold text-ink break-all">{d.original_name}</div>
@@ -165,7 +190,75 @@ export function DocumentsPanel({ companyId, canUpload = true }: { companyId: str
           </>
         )}
       </Card>
+      {naming && <NewFolder onClose={() => setNaming(false)} onDone={(c) => { setNaming(false); reloadCats(); open({ fy, folder: String(c.id) }); }} />}
+      {moving && cats && (
+        <MoveFiles docs={(docs ?? []).filter((d) => picked.has(d.id))} cats={cats} at={{ fy, folder, month }}
+          onClose={() => setMoving(false)} onDone={() => { setMoving(false); setPicked(new Set()); reload(); }} />
+      )}
     </div>
+  );
+}
+
+/** A folder for every client, such as Bookkeeping. Directors and managers only. */
+function NewFolder({ name: initial = '', onClose, onDone }: { name?: string; onClose: () => void; onDone: (c: Category) => void }) {
+  const toast = useToast();
+  const [name, setName] = useState(initial);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<unknown>();
+  const save = async () => {
+    setBusy(true); setErr(undefined);
+    try { const c = await api<Category>('/categories', { body: { name: name.trim() } }); toast(`Folder ${c.name} added for every client.`); onDone(c); } catch (e) { setErr(e); } finally { setBusy(false); }
+  };
+  return (
+    <Modal title="New folder" description="Added to every financial year of every client, like Bank statements." onClose={onClose}
+      footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button busy={busy} icon={FolderPlus} onClick={save} disabled={name.trim().length < 2}>Add folder</Button></>}>
+      <div className="space-y-4">
+        <Field label="Folder name"><Input autoFocus value={name} maxLength={60} onChange={(e) => setName(e.target.value)} placeholder="e.g. Bookkeeping" /></Field>
+        <ErrorText error={err} />
+      </div>
+    </Modal>
+  );
+}
+
+/** Moves the chosen files to another year, folder or month. Their inner folders go with them. */
+function MoveFiles({ docs, cats, at, onClose, onDone }: { docs: Doc[]; cats: Category[]; at: { fy: string; folder: string; month: string }; onClose: () => void; onDone: () => void }) {
+  const toast = useToast();
+  const [fy, setFy] = useState(at.fy || docs[0]?.fy || currentFy());
+  const [folder, setFolder] = useState(at.folder);
+  const [month, setMonth] = useState(at.month);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<unknown>();
+  const move = async () => {
+    setBusy(true); setErr(undefined);
+    let failed = 0;
+    for (const d of docs) {
+      try { await api(`/documents/${d.id}/move`, { body: { fy, category_id: folder, month: month ? Number(month) : null } }); } catch { failed++; }
+    }
+    setBusy(false);
+    const moved = docs.length - failed;
+    if (moved) toast(`${moved} file${moved > 1 ? 's' : ''} moved.`);
+    if (failed) setErr(new Error(`${failed} file${failed > 1 ? 's' : ''} could not be moved. Please try again.`)); else onDone();
+  };
+  return (
+    <Modal title={`Move ${docs.length} file${docs.length > 1 ? 's' : ''}`} description="The move is recorded in the audit trail." onClose={onClose}
+      footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button busy={busy} icon={FolderInput} onClick={move} disabled={!folder}>Move</Button></>}>
+      <div className="space-y-4">
+        <Field label="Financial year"><Select value={fy} onChange={(e) => setFy(e.target.value)}>{[...new Set([...fyOptions(), fy])].sort().reverse().map((f) => <option key={f} value={f}>FY {f}</option>)}</Select></Field>
+        <Field label="Folder">
+          <Select value={folder} onChange={(e) => setFolder(e.target.value)}>
+            <option value="">Choose a folder</option>
+            {cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </Select>
+        </Field>
+        <Field label="Month" optional>
+          <Select value={month} onChange={(e) => setMonth(e.target.value)}>
+            <option value="">Not for a particular month</option>
+            {MONTHS.map((m, i) => <option key={m} value={MONTH_NUM[i]}>{m}</option>)}
+          </Select>
+        </Field>
+        <ErrorText error={err} />
+      </div>
+    </Modal>
   );
 }
 
@@ -194,8 +287,9 @@ async function readDropped(data: DataTransfer): Promise<Picked[]> {
   return out;
 }
 
-function UploadZone({ companyId, cats, at, onDone }: { companyId: string; cats: Category[]; at: { fy: string; folder: string; month: string }; onDone: () => void }) {
+function UploadZone({ companyId, cats, at, onDone, onNewFolder }: { companyId: string; cats: Category[]; at: { fy: string; folder: string; month: string }; onDone: () => void; onNewFolder?: () => void }) {
   const toast = useToast();
+  const [naming, setNaming] = useState<string | null>(null);
   const [category, setCategory] = useState(at.folder);
   const [fy, setFy] = useState(at.fy || currentFy());
   const [month, setMonth] = useState(at.month);
@@ -214,6 +308,8 @@ function UploadZone({ companyId, cats, at, onDone }: { companyId: string; cats: 
   const planned = files.map((f) => ({ ...f, place: placeFile(f.path, fixed, { category, fy, month }, cats) }));
   const ready = planned.filter((f) => f.place.category && f.file.size <= MAX);
   const unfiled = planned.filter((f) => !f.place.category).length;
+  // Folder names in the upload that look like document types the portal does not have yet.
+  const unknown = [...new Set(planned.filter((f) => !f.place.category && f.place.newFolder).map((f) => f.place.newFolder!))];
 
   const submit = async () => {
     setErr(undefined);
@@ -298,6 +394,17 @@ function UploadZone({ companyId, cats, at, onDone }: { companyId: string; cats: 
         </ul>
       )}
 
+      {!busy && !!unknown.length && (
+        <div className="mt-4 rounded-xl bg-amber-50 ring-1 ring-amber-200 px-4 py-3 text-sm text-amber-900">
+          <p>{onNewFolder ? 'These folders are not in the portal yet. Add them to file everything in them, or choose a folder above:' : 'These folders are not in the portal yet. Ask a manager to add them, or choose a folder above:'}</p>
+          <div className="flex flex-wrap gap-2 mt-2">
+            {unknown.map((n) => onNewFolder
+              ? <Button key={n} size="sm" variant="secondary" icon={FolderPlus} onClick={() => setNaming(n)}>Add folder “{n}”</Button>
+              : <span key={n} className="rounded-md bg-white px-2 py-1 ring-1 ring-amber-200">{n}</span>)}
+          </div>
+        </div>
+      )}
+      {naming !== null && <NewFolder name={naming} onClose={() => setNaming(null)} onDone={() => { setNaming(null); onNewFolder?.(); }} />}
       {err ? <div className="mt-4"><ErrorText error={err} /></div> : null}
       <div className="flex flex-wrap items-center justify-between gap-3 mt-4">
         <span className="text-xs text-slate-500" aria-live="polite">

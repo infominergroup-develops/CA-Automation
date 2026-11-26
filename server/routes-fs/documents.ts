@@ -5,7 +5,7 @@ import { config } from '../config.ts';
 import { cleanName, detectType, zFy, zText } from '../shared.ts';
 import { assertCompany, canViewDocument, inScope, userNames } from '../firestore/authz.ts';
 import {
-  IntegrityError, cleanSubfolder, createDocument, docFolder, getDocumentMeta, listCategories, listDocuments, readDocument, reviewDocument, softDeleteDocument,
+  IntegrityError, cleanSubfolder, createDocument, docFolder, moveDocument, getDocumentMeta, listCategories, listDocuments, readDocument, reviewDocument, softDeleteDocument,
 } from '../firestore/documents.ts';
 import { HttpError, auditReq, h, parse, requireAuth, requireRole } from '../firestore/http.ts';
 import { employeeCategories } from '../firestore/tasks.ts';
@@ -109,6 +109,26 @@ documentsRouter.patch('/documents/:id/review', requireRole('director', 'manager'
   if (b.status === 'reupload' && !b.note) throw new HttpError(400, 'Tell the client why it needs re-uploading.');
   await reviewDocument(doc.id, b.status, b.note ?? null, req.user!.id);
   await auditReq(req, { action: 'document.reviewed', objectType: 'document', objectId: doc.id, companyId: doc.company_id, details: b });
+  res.json({ ok: true });
+}));
+
+/** Directors and managers move a file to another year, folder or month; its inner folders go with it unless changed. */
+documentsRouter.post('/documents/:id/move', requireRole('director', 'manager'), h(async (req, res) => {
+  const b = parse(z.object({
+    category_id: zCategory,
+    fy: zFy,
+    month: z.number().int().min(1).max(12).nullable(),
+    subfolder: z.string().max(1000).optional().transform((s) => (s === undefined ? undefined : cleanSubfolder(s))),
+  }), req.body);
+  const doc = await getDocumentMeta(String(req.params.id));
+  if (!doc || !(await inScope(req.user!, doc.company_id))) throw new HttpError(404, 'Not found.');
+  const company = await assertCompany(req.user!, doc.company_id);
+  const category = (await listCategories()).find((c) => c.id === b.category_id);
+  if (!category) throw new HttpError(400, 'Unknown folder.');
+  const subfolder = b.subfolder ?? doc.subfolder ?? '';
+  await moveDocument(doc, { fy: b.fy, categoryId: category.id, month: b.month, subfolder, folder: docFolder(company.legal_name, b.fy, category.name, b.month, subfolder) });
+  await auditReq(req, { action: 'document.moved', objectType: 'document', objectId: doc.id, companyId: doc.company_id,
+    details: { from: { fy: doc.fy, category_id: doc.category_id, month: doc.month, subfolder: doc.subfolder ?? '' }, to: { fy: b.fy, category_id: category.id, month: b.month, subfolder } } });
   res.json({ ok: true });
 }));
 

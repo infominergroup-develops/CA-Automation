@@ -1,6 +1,6 @@
 import { decryptFile, encryptFile, sha256 } from '../security/crypto.ts';
 import { db } from './client.ts';
-import { getById, newId, now, query } from './store.ts';
+import { FieldValue, getById, newId, now, query } from './store.ts';
 import { blobs } from './storage.ts';
 import { C } from './types.ts';
 
@@ -38,7 +38,21 @@ export async function ensureCategories(): Promise<void> {
 }
 export async function listCategories(): Promise<Category[]> {
   const cats = await query<Category>(C.documentCategories, { where: [['active', '==', true]] });
-  return cats.sort((a, b) => a.sort - b.sort);
+  return cats.sort((a, b) => a.sort - b.sort || a.name.localeCompare(b.name));
+}
+
+export class FolderExistsError extends Error {}
+
+/** A folder the firm adds itself, such as Bookkeeping. It lists alphabetically among the firm's own, before Others. */
+export async function addCategory(name: string): Promise<Category> {
+  const id = slug(name);
+  if (!id) throw new FolderExistsError('Use letters or numbers in the name.');
+  const cat: Category = { id, name, sort: DEFAULT_CATEGORIES.length - 1.5, active: true };
+  // create() fails if the id exists, so two people adding the same folder at once cannot both win.
+  await db.collection(C.documentCategories).doc(id).create(cat).catch((e) => {
+    throw e?.code === 6 ? new FolderExistsError(`There is already a folder called ${name}.`) : e; // 6 = ALREADY_EXISTS
+  });
+  return cat;
 }
 
 export async function findDuplicate(companyId: string, hash: string): Promise<DocumentMeta | undefined> {
@@ -98,6 +112,24 @@ export async function listDocuments(companyId: string, filter: { categoryId?: st
     .sort((a, b) => b.created_at.localeCompare(a.created_at));
   // category/fy filtered in memory to avoid an index per combination (document counts per company are modest).
   return rows.filter((d) => (!filter.categoryId || d.category_id === filter.categoryId) && (!filter.fy || d.fy === filter.fy)).map(strip);
+}
+
+/**
+ * Moves a file to another year, folder or month. The ciphertext is copied to its new place first and the record
+ * updated, and only then is the old copy removed, so a failure part-way never loses the file.
+ */
+export async function moveDocument(doc: DocumentDoc, to: { fy: string; categoryId: string; month: number | null; subfolder: string; folder: string }): Promise<void> {
+  const key = `${to.folder}/${doc.blob_key.split('/').pop()}`;
+  if (key !== doc.blob_key) await blobs.put(key, await blobs.get(doc.blob_key));
+  try {
+    await db.collection(C.documents).doc(doc.id).update({
+      fy: to.fy, category_id: to.categoryId, month: to.month, subfolder: to.subfolder || FieldValue.delete(), blob_key: key,
+    });
+  } catch (e) {
+    if (key !== doc.blob_key) await blobs.delete(key).catch(() => {});
+    throw e;
+  }
+  if (key !== doc.blob_key) await blobs.delete(doc.blob_key).catch((e) => console.error(`Old copy left at ${doc.blob_key}`, e));
 }
 
 export const getDocumentMeta = async (id: string) => {
