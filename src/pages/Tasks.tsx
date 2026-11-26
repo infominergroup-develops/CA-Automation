@@ -1,15 +1,14 @@
 import { useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import {
-  Ban, Check, ChevronRight, CircleCheck, Clock, FolderOpen, KeyRound, ListChecks, Play, Plus, Send, Timer, Undo2,
+  Ban, Check, ChevronRight, CircleCheck, Clock, FolderOpen, ListChecks, Play, Plus, Send, Timer, Undo2,
 } from 'lucide-react';
 import { api, fmtDate, fmtDateTime, fmtHours } from '../api';
 import { useUser } from '../auth';
 import {
-  Avatar, Badge, Button, Card, Chip, EmptyState, ErrorText, Field, Input, LoadingRows, Modal, PageHeader, Select, StatusBadge, Table, Tabs, Td,
+  Avatar, Badge, Button, Card, EmptyState, ErrorText, Field, Input, LoadingRows, Modal, PageHeader, Select, StatusBadge, Table, Tabs, Td,
   Textarea, useConfirm, useLoad, useToast,
 } from '../components/ui';
-import type { Category } from '../components/DocumentsPanel';
 import type { StaffUser } from './Clients';
 
 export interface TaskRow {
@@ -148,12 +147,10 @@ export function TaskForm({ companyId, assignTaskId, initial, onClose, onDone }:
   const [companies] = useLoad(() => api<{ id: string; legal_name: string }[]>('/companies'));
   const [staff] = useLoad(() => api<StaffUser[]>('/users'));
   const [meta] = useLoad(() => api<{ types: string[] }>('/tasks/meta'));
-  const [cats] = useLoad(() => api<Category[]>('/categories'));
   const [f, setF] = useState({
     company_id: companyId ?? '', type: initial?.type ?? 'GST return', title: initial?.title ?? '', period: '', instructions: initial?.instructions ?? '',
     assignee_id: '', reviewer_id: u.id, due_date: '', statutory_due: '', priority: 'normal', estimate_hours: '',
   });
-  const [grant, setGrant] = useState<number[]>([]);
   const [err, setErr] = useState<unknown>();
   const [busy, setBusy] = useState(false);
   const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value });
@@ -170,7 +167,7 @@ export function TaskForm({ companyId, assignTaskId, initial, onClose, onDone }:
         await api(`/tasks/${assignTaskId}/assign`, { body });
         toast('Request assigned');
       } else {
-        await api('/tasks', { body: { ...body, grant_category_ids: grant.length ? grant : undefined } });
+        await api('/tasks', { body });
         toast('Task created and assigned');
       }
       onDone();
@@ -213,15 +210,6 @@ export function TaskForm({ companyId, assignTaskId, initial, onClose, onDone }:
           <Field label="Estimate (h)" optional><Input type="number" min="0" step="0.5" value={f.estimate_hours} onChange={set('estimate_hours')} /></Field>
         </div>
         <Field label="Instructions" optional><Textarea value={f.instructions} onChange={set('instructions')} placeholder="What should be done, and anything to watch for" /></Field>
-        {!assignTaskId && (
-          <fieldset>
-            <legend className="text-[13px] font-medium text-ink mb-1">Grant document access now <span className="font-normal text-slate-400">· optional</span></legend>
-            <p className="text-xs text-slate-500 mb-2">Otherwise the assignee requests access when they start. Access ends when you approve the task.</p>
-            <div className="flex flex-wrap gap-2">
-              {cats?.map((c) => <Chip key={c.id} selected={grant.includes(c.id)} onToggle={() => setGrant((g) => (g.includes(c.id) ? g.filter((x) => x !== c.id) : [...g, c.id]))}>{c.name}</Chip>)}
-            </div>
-          </fieldset>
-        )}
         <ErrorText error={err} />
       </div>
     </Modal>
@@ -268,13 +256,10 @@ function Stepper({ status }: { status: string }) {
 
 export function TaskDetail() {
   const { id } = useParams();
-  const u = useUser();
   const toast = useToast();
   const confirm = useConfirm();
   const [t, err, reload] = useLoad(() => api<TaskDetailData>(`/tasks/${id}`), [id]);
-  const [cats] = useLoad(() => api<Category[]>('/categories'));
-  const [modal, setModal] = useState<null | 'approve' | 'access' | 'assign'>(null);
-  const catName = (cid: number) => cats?.find((c) => c.id === cid)?.name ?? `#${cid}`;
+  const [modal, setModal] = useState<null | 'approve' | 'assign'>(null);
 
   const act = async (path: string, body: Record<string, unknown>, ok: string) => {
     try { await api(`/tasks/${id}/${path}`, { body }); toast(ok); setModal(null); reload(); return true; } catch (e) { toast((e as Error).message, 'error'); return false; }
@@ -286,18 +271,9 @@ export function TaskDetail() {
   const startTimer = async () => {
     try { await api('/time/start', { body: { task_id: id } }); window.dispatchEvent(new Event('timer-changed')); toast('Timer started'); } catch (e) { toast((e as Error).message, 'error'); }
   };
-  const decide = async (gid: string, decision: 'grant' | 'reject') => {
-    try { await api(`/access-requests/${gid}/decide`, { body: { decision } }); toast(decision === 'grant' ? 'Access granted' : 'Request rejected'); reload(); } catch (e) { toast((e as Error).message, 'error'); }
-  };
-  const revoke = async (gid: string) => {
-    if (!(await confirm({ title: 'Revoke document access now?', body: 'The assignee will immediately lose access to these documents.', confirmLabel: 'Revoke', danger: true }))) return;
-    try { await api(`/access-grants/${gid}/revoke`, { body: {} }); toast('Access revoked'); reload(); } catch (e) { toast((e as Error).message, 'error'); }
-  };
-
   if (err) return <ErrorText error={err} />;
   if (!t) return <LoadingRows rows={6} />;
-  const working = t.can.requestAccess;
-  const hasGrant = t.grants.some((g) => g.status === 'granted');
+  const working = t.can.requestAccess; // the assignee, while the task is open
   const actions = [
     t.can.start && <Button key="start" icon={Play} onClick={() => act('start', {}, 'Task started')}>{t.status === 'rework' ? 'Resume work' : 'Start work'}</Button>,
     working && t.status === 'in_progress' && <Button key="timer" variant="secondary" icon={Timer} onClick={startTimer}>Start timer</Button>,
@@ -341,39 +317,10 @@ export function TaskDetail() {
             ))}
           </Card>
 
-          <Card title="Document access" description="Employees see a client's documents only for the categories granted on this task."
-            actions={working && <Button size="sm" variant="secondary" icon={KeyRound} onClick={() => setModal('access')}>Request access</Button>}>
-            {!t.grants.length ? (
-              <EmptyState icon={KeyRound} title="No access requested">{working ? 'Request only the categories this task needs.' : 'Nothing has been requested on this task.'}</EmptyState>
-            ) : (
-              <ul className="space-y-3">
-                {t.grants.map((g) => (
-                  <li key={g.id} className="rounded-2xl ring-1 ring-ink/[0.07] bg-white p-4">
-                    <div className="flex justify-between gap-3 flex-wrap">
-                      <div className="flex flex-wrap gap-1.5">{g.category_ids.map((c) => <Badge key={c} tone="ink">{catName(c)}</Badge>)}</div>
-                      {g.status === 'requested' ? <Badge tone="amber" dot>Awaiting decision</Badge> : <StatusBadge status={g.status} />}
-                    </div>
-                    <p className="text-sm text-slate-700 mt-2">{g.reason}</p>
-                    <p className="text-xs text-slate-500 mt-1">
-                      Requested {fmtDateTime(g.created_at)}{g.decided_by_name && ` · decided by ${g.decided_by_name}`}
-                      {g.status === 'granted' && g.expires_at && ` · ends ${fmtDate(g.expires_at)} or on approval`}
-                    </p>
-                    {g.status === 'requested' && t.can.decideAccess && (
-                      <div className="flex gap-2 mt-3">
-                        <Button size="sm" icon={Check} onClick={() => decide(g.id, 'grant')}>Grant</Button>
-                        <Button size="sm" variant="danger" onClick={() => decide(g.id, 'reject')}>Reject</Button>
-                      </div>
-                    )}
-                    {g.status === 'granted' && t.can.decideAccess && <Button size="sm" variant="ghost" className="mt-2 -ml-3" onClick={() => revoke(g.id)}>Revoke now</Button>}
-                  </li>
-                ))}
-              </ul>
-            )}
-            {u.role === 'employee' && hasGrant && (
-              <Link to={`/company/${t.company_id}`} className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-brand-700 hover:underline">
-                <FolderOpen className="size-4" aria-hidden />Open granted documents<ChevronRight className="size-4" aria-hidden />
-              </Link>
-            )}
+          <Card title="Documents" description="Everyone working on this task can open all of this client’s documents while it is open. Only a director can delete them.">
+            <Link to={`/company/${t.company_id}`} className="inline-flex items-center gap-2 text-sm font-semibold text-brand-700 hover:underline">
+              <FolderOpen className="size-4" aria-hidden />Open {t.company}’s documents<ChevronRight className="size-4" aria-hidden />
+            </Link>
           </Card>
         </div>
 
@@ -394,8 +341,6 @@ export function TaskDetail() {
       </div>
 
       {modal === 'approve' && <ApproveModal onClose={() => setModal(null)} onSave={(b) => act('approve', b, 'Approved. The client has been updated.')} />}
-      {modal === 'access' && <AccessModal cats={cats ?? []} onClose={() => setModal(null)}
-        onSave={(b) => api(`/tasks/${id}/access-requests`, { body: b }).then(() => { toast('Access requested. Your manager has been notified.'); setModal(null); reload(); })} />}
       {modal === 'assign' && <TaskForm assignTaskId={t.id} initial={{ type: t.type, title: t.title, instructions: t.instructions ?? '' }} onClose={() => setModal(null)} onDone={() => { setModal(null); reload(); }} />}
     </>
   );
@@ -428,25 +373,3 @@ function ApproveModal({ onClose, onSave }: { onClose: () => void; onSave: (b: Re
   );
 }
 
-function AccessModal({ cats, onClose, onSave }: { cats: Category[]; onClose: () => void; onSave: (b: { category_ids: number[]; reason: string }) => Promise<unknown> }) {
-  const [sel, setSel] = useState<number[]>([]);
-  const [reason, setReason] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<unknown>();
-  const save = () => { setBusy(true); onSave({ category_ids: sel, reason: reason.trim() }).catch(setErr).finally(() => setBusy(false)); };
-  return (
-    <Modal title="Request document access" description="Ask only for what this task needs. Access ends automatically when the task is approved." onClose={onClose}
-      footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button busy={busy} icon={Send} disabled={!sel.length || reason.trim().length < 5} onClick={save}>Send request</Button></>}>
-      <div className="space-y-4">
-        <fieldset>
-          <legend className="text-[13px] font-medium text-ink mb-2">Categories</legend>
-          <div className="flex flex-wrap gap-2">
-            {cats.map((c) => <Chip key={c.id} selected={sel.includes(c.id)} onToggle={() => setSel((s) => (s.includes(c.id) ? s.filter((x) => x !== c.id) : [...s, c.id]))}>{c.name}</Chip>)}
-          </div>
-        </fieldset>
-        <Field label="Why do you need these?"><Textarea value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Bank statements Apr–Sep to reconcile ITC" /></Field>
-        <ErrorText error={err} />
-      </div>
-    </Modal>
-  );
-}

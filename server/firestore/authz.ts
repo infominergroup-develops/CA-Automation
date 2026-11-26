@@ -1,6 +1,6 @@
 import { HttpError, type SessionUser } from './http.ts';
 import { getById, query } from './store.ts';
-import { OPEN_STATUSES, employeeCategories, getTask } from './tasks.ts';
+import { OPEN_STATUSES, getTask } from './tasks.ts';
 import { C, type CompanyDoc, type TaskDoc, type UserDoc } from './types.ts';
 
 /**
@@ -54,9 +54,8 @@ export async function assertCompany(u: SessionUser, companyId: string): Promise<
   return c;
 }
 
-/** Employees see document types granted to them, and their own uploads while the company is in their scope. */
-export async function canViewDocument(u: SessionUser, doc: { company_id: string; category_id: string; uploaded_by: string }): Promise<boolean> {
-  if (u.role === 'employee' && doc.uploaded_by !== u.id) return (await employeeCategories(u.id, doc.company_id)).has(doc.category_id);
+/** Anyone who may see the company sees all its files: for an employee, a client they added or have an open task for. */
+export async function canViewDocument(u: SessionUser, doc: { company_id: string }): Promise<boolean> {
   return inScope(u, doc.company_id);
 }
 

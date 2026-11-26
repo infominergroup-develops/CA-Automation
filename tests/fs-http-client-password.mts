@@ -110,9 +110,10 @@ try {
   check('employee uploads to it', mine.status === 201, mine.data);
   const theirs = await dir.post(G, file('Bank.pdf', 'bank-statements', 'director'));
   const seen = await emp.get(G);
-  check('employee sees their own upload, not the director’s', seen.data.length === 1 && seen.data[0].id === mine.data[0].id, seen.data);
+  check('employee sees every file of the client they added', seen.data.length === 2, seen.data);
   check('employee downloads their own upload', (await emp.get(`/api/documents/${mine.data[0].id}/download`)).status === 200);
-  check('employee cannot download the director’s', (await emp.get(`/api/documents/${theirs.data[0].id}/download`)).status === 404);
+  check('employee downloads the director’s too', (await emp.get(`/api/documents/${theirs.data[0].id}/download`)).status === 200);
+  check('another employee still cannot', (await emp2.get(`/api/documents/${theirs.data[0].id}/download`)).status === 404);
   for (const [who, id] of [['own', mine.data[0].id], ['another’s', theirs.data[0].id]]) {
     check(`employee cannot delete ${who} file`, (await emp.del(`/api/documents/${id}`)).status === 403);
     check(`employee cannot change ${who} file`, (await emp.patch(`/api/documents/${id}/review`, { status: 'accepted' })).status === 403);

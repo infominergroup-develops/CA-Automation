@@ -49,9 +49,8 @@ export function employeeCategories(employeeId: string, companyId: string): Set<n
   return new Set(rows.flatMap((r) => JSON.parse(r.category_ids) as number[]));
 }
 
-/** Employees see document types granted to them, and their own uploads while the company is in their scope. */
-export function canViewDocument(u: SessionUser, doc: { company_id: string; category_id: number; uploaded_by: string }): boolean {
-  if (u.role === 'employee' && doc.uploaded_by !== u.id) return employeeCategories(u.id, doc.company_id).has(doc.category_id);
+/** Anyone who may see the company sees all its files: for an employee, a client they added or have an open task for. */
+export function canViewDocument(u: SessionUser, doc: { company_id: string }): boolean {
   return inScope(u, doc.company_id);
 }
 

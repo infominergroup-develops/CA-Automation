@@ -8,7 +8,6 @@ import {
   IntegrityError, cleanSubfolder, createDocument, docFolder, moveDocument, getDocumentMeta, listCategories, listDocuments, readDocument, reviewDocument, softDeleteDocument,
 } from '../firestore/documents.ts';
 import { HttpError, auditReq, h, parse, requireAuth, requireRole } from '../firestore/http.ts';
-import { employeeCategories } from '../firestore/tasks.ts';
 
 export const documentsRouter = Router();
 
@@ -32,10 +31,6 @@ documentsRouter.get('/companies/:companyId/documents', requireAuth, h(async (req
     review_note: d.review_note, created_at: d.created_at, uploaded_by: d.uploaded_by,
     uploaded_by_name: users.get(d.uploaded_by)?.name ?? '', uploaded_by_role: users.get(d.uploaded_by)?.role ?? '',
   }));
-  if (req.user!.role === 'employee') {
-    const allowed = await employeeCategories(req.user!.id, companyId);
-    rows = rows.filter((r) => allowed.has(r.category_id) || r.uploaded_by === req.user!.id);
-  }
   if (req.user!.role === 'client') {
     // Staff names stay internal.
     return res.json(rows.map(({ uploaded_by_name, uploaded_by, uploaded_by_role, ...r }) => ({

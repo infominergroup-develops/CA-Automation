@@ -1,4 +1,4 @@
-import { useRef, useState, type DragEvent } from 'react';
+import { useState, type DragEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   Check, ChevronRight, Download, FileImage, FileSpreadsheet, FileText, FileArchive, Fingerprint, Folder, FolderInput, FolderOpen, FolderPlus, FolderUp, RotateCcw, Search, Trash2, UploadCloud, X,
@@ -93,7 +93,7 @@ export function DocumentsPanel({ companyId, canUpload = true }: { companyId: str
     <div className="space-y-6">
       {canUpload && <UploadZone key={`${fy}|${folder}|${month}`} companyId={companyId} cats={cats ?? []} at={{ fy, folder, month }} onDone={reload} onNewFolder={managerial ? reloadCats : undefined} />}
 
-      <Card title="Documents" description={u.role === 'employee' ? 'Your uploads, and the document types granted to you for an open task.' : `${docs?.length ?? '–'} files`} padded={false}
+      <Card title="Documents" description={u.role === 'employee' ? 'All files of clients you added or have an open task for. You can upload and download, not delete or move.' : `${docs?.length ?? '–'} files`} padded={false}
         actions={
           <div className="relative">
             <Search className="size-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" aria-hidden />

@@ -144,9 +144,9 @@ try {
   check('employee sees their task', (await emp.get('/api/tasks')).data.length === 1);
   check('employee sees the company', (await emp.get('/api/companies')).data.length === 1);
   const empDocs = await emp.get(`/api/companies/${companyId}/documents`);
-  check('employee sees only the granted category', empDocs.data.length === 1 && empDocs.data[0].category_id === bank, empDocs.data);
+  check('employee sees every file of a client they work on, without asking', empDocs.data.length === 2, empDocs.data);
   check('employee can download granted doc', (await emp.get(`/api/documents/${up.data[0].id}/download`)).status === 200);
-  check('employee cannot download other category', (await emp.get(`/api/documents/${up2.data[0].id}/download`)).status === 404);
+  check('employee downloads any file of that client', (await emp.get(`/api/documents/${up2.data[0].id}/download`)).status === 200);
   check('employee cannot see the other company', (await emp.get(`/api/companies/${other.data.companyId}/documents`)).status === 404);
 
   const ar = await emp.post(`/api/tasks/${taskId}/access-requests`, { category_ids: [gst], reason: 'Need GST docs to reconcile' });

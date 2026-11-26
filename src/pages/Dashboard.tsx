@@ -1,7 +1,7 @@
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowUpRight } from 'lucide-react';
 import {
-  AlarmClock, Building2, CalendarCheck, ChevronRight, CircleCheck, ClipboardCheck, FileSearch, FileText, Inbox, KeyRound,
+  AlarmClock, Building2, CalendarCheck, ChevronRight, CircleCheck, ClipboardCheck, FileSearch, FileText, Inbox,
   ListChecks, Plus, RotateCcw, Send, ShieldCheck, Upload,
 } from 'lucide-react';
 import { useState } from 'react';
@@ -42,7 +42,6 @@ function StaffDashboard() {
 
   const attention = d ? [
     managerial && { n: d.toReview, label: 'Tasks submitted for your review', icon: ClipboardCheck, to: '/review' },
-    managerial && { n: d.accessRequests, label: 'Document access requests', icon: KeyRound, to: '/review' },
     managerial && { n: d.clientRequests, label: 'New client requests to assign', icon: Inbox, to: '/review' },
     { n: d.myRework, label: 'Your tasks sent back for rework', icon: RotateCcw, to: '/tasks?view=mine&status=rework' },
     u.role === 'director' && { n: d.privacyOpen, label: 'Open privacy requests', icon: ShieldCheck, to: '/privacy' },

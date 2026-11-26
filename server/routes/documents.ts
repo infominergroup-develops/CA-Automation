@@ -4,7 +4,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import { z } from 'zod';
 import { config } from '../config.ts';
-import { assertCompany, canViewDocument, employeeCategories, inScope } from '../authz.ts';
+import { assertCompany, canViewDocument, inScope } from '../authz.ts';
 import { all, one, run, now, id } from '../db.ts';
 import { auditReq, parse, zFy, zText } from '../http.ts';
 import { decryptFile, encryptFile, sha256 } from '../security/crypto.ts';
@@ -47,10 +47,6 @@ documentsRouter.get('/companies/:companyId/documents', requireAuth, (req, res) =
        AND (? IS NULL OR d.category_id = ?) AND (? IS NULL OR d.fy = ?)
      ORDER BY d.created_at DESC LIMIT 5000`,
     [companyId, q.category_id ?? null, q.category_id ?? null, q.fy ?? null, q.fy ?? null]);
-  if (req.user!.role === 'employee') {
-    const allowed = employeeCategories(req.user!.id, companyId);
-    rows = rows.filter((r) => allowed.has(r.category_id) || r.uploaded_by === req.user!.id);
-  }
   if (req.user!.role === 'client') {
     // Staff names stay internal.
     rows = rows.map(({ uploaded_by_name, uploaded_by, uploaded_by_role, ...r }) => ({
