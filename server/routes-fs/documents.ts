@@ -76,6 +76,8 @@ documentsRouter.post('/companies/:companyId/documents', requireAuth, upload.arra
 documentsRouter.get('/documents/:id/download', requireAuth, h(async (req, res) => {
   const doc = await getDocumentMeta(String(req.params.id));
   if (!doc || !(await canViewDocument(req.user!, doc))) throw new HttpError(404, 'Not found.');
+  // ?view=1: opened in the portal's viewer rather than saved; recorded as a view.
+  const view = req.query.view === '1';
   let file: Awaited<ReturnType<typeof readDocument>>;
   try {
     // Authenticity check inside: the decrypted bytes must match the hash recorded at upload.
@@ -85,10 +87,10 @@ documentsRouter.get('/documents/:id/download', requireAuth, h(async (req, res) =
     await auditReq(req, { action: 'document.integrity_failure', objectType: 'document', objectId: doc.id, companyId: doc.company_id });
     throw new HttpError(409, 'This file failed its integrity check and was not served. The incident has been logged.');
   }
-  await auditReq(req, { action: 'document.downloaded', objectType: 'document', objectId: doc.id, companyId: doc.company_id });
+  await auditReq(req, { action: view ? 'document.viewed' : 'document.downloaded', objectType: 'document', objectId: doc.id, companyId: doc.company_id });
   res.setHeader('Content-Type', file.mime);
   res.setHeader('Content-Length', file.bytes.length);
-  res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`);
+  res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`); // never rendered by visiting the URL
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('X-Document-SHA256', file.sha256);
   res.end(file.bytes);

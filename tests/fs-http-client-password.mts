@@ -7,6 +7,7 @@ import './emulator-only.mts';
 import type { AddressInfo } from 'node:net';
 import { createApp } from '../server/firestore/app.ts';
 import { db } from '../server/firestore/client.ts';
+import { C } from '../server/firestore/types.ts';
 import { createStaffUser } from '../server/firestore/users.ts';
 import { ensureSettingDefaults } from '../server/firestore/settings.ts';
 import { ensureCategories, getDocumentMeta } from '../server/firestore/documents.ts';
@@ -119,6 +120,10 @@ try {
   check('employee downloads their own upload', (await emp.get(`/api/documents/${mine.data[0].id}/download`)).status === 200);
   check('employee downloads the director’s too', (await emp.get(`/api/documents/${theirs.data[0].id}/download`)).status === 200);
   check('another employee still cannot', (await emp2.get(`/api/documents/${theirs.data[0].id}/download`)).status === 404);
+  // Viewing in the portal: same access rules, recorded as a view rather than a download.
+  const views = async () => (await db.collection(C.audit).where('action', '==', 'document.viewed').where('object_id', '==', theirs.data[0].id).get()).size;
+  check('employee views a file in the portal', (await emp.get(`/api/documents/${theirs.data[0].id}/download?view=1`)).status === 200 && (await views()) === 1);
+  check('no view for someone who cannot download it', (await emp2.get(`/api/documents/${theirs.data[0].id}/download?view=1`)).status === 404 && (await views()) === 1);
   for (const [who, id] of [['own', mine.data[0].id], ['another’s', theirs.data[0].id]]) {
     check(`employee cannot delete ${who} file`, (await emp.del(`/api/documents/${id}`)).status === 403);
     check(`employee cannot change ${who} file`, (await emp.patch(`/api/documents/${id}/review`, { status: 'accepted' })).status === 403);

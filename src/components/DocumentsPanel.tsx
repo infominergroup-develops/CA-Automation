@@ -1,9 +1,10 @@
-import { useState, type DragEvent } from 'react';
+import { useEffect, useState, type DragEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
-  Check, ChevronRight, Download, FileImage, FileSpreadsheet, FileText, FileArchive, Fingerprint, Folder, FolderInput, FolderOpen, FolderPlus, FolderUp, RotateCcw, Search, Trash2, UploadCloud, X,
+  Check, ChevronLeft, ChevronRight, Download, Eye, FileImage, FileSpreadsheet, FileText, FileArchive, Fingerprint, Folder, FolderInput, FolderOpen, FolderPlus, FolderUp, RotateCcw, Search, Trash2, UploadCloud, X,
 } from 'lucide-react';
-import { api, currentFy, download, fmtDateTime, fmtSize, fyOptions } from '../api';
+import { api, currentFy, download, fetchBlob, fmtDateTime, fmtSize, fyOptions } from '../api';
+import { parseCsv } from '../csv';
 import { useUser } from '../auth';
 import { placeFile, type Place } from '../placeFile';
 import { Button, Card, EmptyState, ErrorText, Field, IconButton, Input, LoadingRows, Modal, Select, StatusBadge, useConfirm, useLoad, useToast } from './ui';
@@ -42,6 +43,7 @@ export function DocumentsPanel({ companyId, canUpload = true }: { companyId: str
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [moving, setMoving] = useState(false);
   const [naming, setNaming] = useState(false);
+  const [viewing, setViewing] = useState<number | null>(null);
   const fy = params.get('fy') ?? '', folder = params.get('folder') ?? '', month = params.get('month') ?? '';
   const [q, setQ] = useState('');
   const [docs, loadErr, reload, loading] = useLoad(() => api<Doc[]>(`/companies/${companyId}/documents`), [companyId]);
@@ -161,7 +163,7 @@ export function DocumentsPanel({ companyId, canUpload = true }: { companyId: str
                       )}
                       <FileIcon mime={d.mime} name={d.original_name} />
                       <div className="min-w-0">
-                        <div className="text-sm font-semibold text-ink break-all">{d.original_name}</div>
+                        <button type="button" onClick={() => setViewing(files.indexOf(d))} className="text-left text-sm font-semibold text-ink break-all hover:text-brand-700 hover:underline">{d.original_name}</button>
                         <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-slate-500 mt-0.5">
                           {q && <><span>FY {d.fy} / {d.category}{d.month ? ` / ${monthName(d.month)}` : ''}</span><span aria-hidden>·</span></>}
                           {d.subfolder && <><span className="break-all">{d.subfolder}</span><span aria-hidden>·</span></>}
@@ -177,6 +179,7 @@ export function DocumentsPanel({ companyId, canUpload = true }: { companyId: str
                     <div className="flex items-center justify-between sm:justify-end gap-2 pl-[52px] sm:pl-0">
                       <StatusBadge status={d.review_status} />
                       <div className="flex">
+                        <IconButton label={`View ${d.original_name}`} icon={Eye} onClick={() => setViewing(files.indexOf(d))} />
                         <IconButton label={`Download ${d.original_name}`} icon={Download} onClick={() => get(d)} />
                         {managerial && d.review_status !== 'accepted' && <IconButton label="Accept" icon={Check} tone="success" onClick={() => accept(d)} />}
                         {managerial && d.review_status !== 'reupload' && <IconButton label="Ask for re-upload" icon={RotateCcw} tone="danger" onClick={() => askReupload(d)} />}
@@ -190,6 +193,9 @@ export function DocumentsPanel({ companyId, canUpload = true }: { companyId: str
           </>
         )}
       </Card>
+      {viewing !== null && files[viewing] && (
+        <FileViewer docs={files} index={viewing} onIndex={setViewing} onClose={() => setViewing(null)} onDownload={get} />
+      )}
       {naming && <NewFolder onClose={() => setNaming(false)} onDone={(c) => { setNaming(false); reloadCats(); open({ fy, folder: String(c.id) }); }} />}
       {moving && cats && (
         <MoveFiles docs={(docs ?? []).filter((d) => picked.has(d.id))} cats={cats} at={{ fy, folder, month }}
@@ -415,5 +421,78 @@ function UploadZone({ companyId, cats, at, onDone, onNewFolder }: { companyId: s
         </Button>
       </div>
     </Card>
+  );
+}
+
+/** What the viewer can show inside the portal; other files are offered as a download. */
+// Phones whose browser has no built-in PDF viewer (Chrome on Android) would show an empty box, so they get the download.
+const viewKind = (mime: string) =>
+  mime === 'application/pdf' ? (navigator.pdfViewerEnabled === false ? null : 'pdf') : ['image/jpeg', 'image/png', 'image/webp'].includes(mime) ? 'image'
+    : mime === 'text/csv' ? 'csv' : mime === 'text/plain' ? 'text' : null;
+
+/** Shows a file inside the portal, with previous/next through the files listed. Each opening is recorded as a view. */
+function FileViewer({ docs, index, onIndex, onClose, onDownload }: { docs: Doc[]; index: number; onIndex: (i: number) => void; onClose: () => void; onDownload: (d: Doc) => void }) {
+  const d = docs[index];
+  const kind = viewKind(d.mime);
+  const [shown, setShown] = useState<{ id: string; url?: string; text?: string; error?: string }>();
+  useEffect(() => {
+    if (!kind) return;
+    let live = true, url = '';
+    fetchBlob(`/documents/${d.id}/download?view=1`).then(async (b) => {
+      if (!live) return;
+      if (kind === 'csv' || kind === 'text') setShown({ id: d.id, text: await b.text() });
+      else { url = URL.createObjectURL(new Blob([b], { type: d.mime })); setShown({ id: d.id, url }); }
+    }, (e: Error) => live && setShown({ id: d.id, error: e.message }));
+    return () => { live = false; if (url) URL.revokeObjectURL(url); };
+  }, [d.id, d.mime, kind]);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowLeft' && index > 0) onIndex(index - 1);
+      if (e.key === 'ArrowRight' && index < docs.length - 1) onIndex(index + 1);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [index, docs.length, onIndex]);
+  const ready = shown?.id === d.id ? shown : undefined;
+  const box = 'h-[70dvh] rounded-xl ring-1 ring-ink/10 bg-slate-50';
+  const rows = kind === 'csv' && ready?.text !== undefined ? parseCsv(ready.text) : [];
+  return (
+    <Modal wide="full" title={d.original_name} onClose={onClose}
+      description={<>FY {d.fy} / {d.category}{d.month ? ` / ${monthName(d.month)}` : ''} · {fmtSize(d.size)}</>}
+      footer={
+        <>
+          <span className="mr-auto self-center text-xs text-slate-500">{index + 1} of {docs.length} · use the arrow keys</span>
+          <Button variant="secondary" icon={ChevronLeft} disabled={index === 0} onClick={() => onIndex(index - 1)}>Previous</Button>
+          <Button variant="secondary" disabled={index === docs.length - 1} onClick={() => onIndex(index + 1)}>Next<ChevronRight className="size-4" aria-hidden /></Button>
+          <Button icon={Download} onClick={() => onDownload(d)}>Download</Button>
+        </>
+      }>
+      {!kind ? (
+        <div className={`${box} grid place-items-center`}>
+          <EmptyState icon={FileText} title="This file cannot be shown here">
+            {d.mime === 'application/pdf' ? 'This browser cannot show PDFs inside a page. Download it to open it.'
+              : 'PDFs, photos, CSV and text files open in the portal. Download this one to open it in Excel, Word or another program.'}
+          </EmptyState>
+        </div>
+      ) : ready?.error ? <ErrorText error={new Error(ready.error)} />
+        : !ready ? <div className={`${box} grid place-items-center text-sm text-slate-500`}>Opening…</div>
+          : kind === 'pdf' ? <iframe src={ready.url} title={d.original_name} className={`${box} w-full bg-white`} />
+            : kind === 'image' ? (
+              <div className={`${box} grid place-items-center overflow-auto`}><img src={ready.url} alt={d.original_name} className="max-w-full max-h-full object-contain" /></div>
+            ) : kind === 'csv' ? (
+              <div className={`${box} overflow-auto bg-white`}>
+                <table className="text-xs tabular-nums border-collapse">
+                  <tbody>
+                    {rows.map((r, i) => (
+                      <tr key={i} className={i === 0 ? 'bg-slate-100 font-semibold sticky top-0' : 'odd:bg-slate-50/60'}>
+                        {r.map((c, j) => <td key={j} className="border border-line px-2 py-1 whitespace-nowrap">{c}</td>)}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {rows.length >= 1000 && <p className="p-3 text-xs text-slate-500">Showing the first 1,000 rows. Download the file for the rest.</p>}
+              </div>
+            ) : <pre className={`${box} overflow-auto p-4 text-xs whitespace-pre-wrap break-words bg-white`}>{ready.text}</pre>}
+    </Modal>
   );
 }

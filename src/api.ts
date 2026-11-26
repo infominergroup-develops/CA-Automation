@@ -29,12 +29,20 @@ export async function api<T = unknown>(path: string, opts: { method?: string; bo
 }
 
 /** Downloads through fetch so the session cookie and integrity checks apply; no public file URLs exist. */
-export async function download(path: string, fallbackName: string) {
+async function fetchFile(path: string) {
   const res = await fetch(`/api${path}`, { credentials: 'same-origin', headers: { 'X-Requested-With': 'fetch' } });
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
     throw new ApiError(res.status, data.error ?? 'Download failed.');
   }
+  return res;
+}
+
+/** The file's bytes, for showing it inside the portal. */
+export const fetchBlob = async (path: string) => (await fetchFile(path)).blob();
+
+export async function download(path: string, fallbackName: string) {
+  const res = await fetchFile(path);
   const cd = res.headers.get('content-disposition') ?? '';
   const name = decodeURIComponent(cd.match(/filename\*=UTF-8''([^;]+)/)?.[1] ?? fallbackName);
   const url = URL.createObjectURL(await res.blob());

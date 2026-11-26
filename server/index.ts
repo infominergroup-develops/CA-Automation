@@ -30,7 +30,7 @@ app.use(helmet({
       'style-src': ["'self'", "'unsafe-inline'"],
       'img-src': ["'self'", 'data:', 'blob:'],
       'connect-src': ["'self'"],
-      'frame-ancestors': ["'none'"],
+      'frame-ancestors': ["'none'"], 'frame-src': ["'self'", 'blob:'],
       'form-action': ["'self'"],
     },
   },

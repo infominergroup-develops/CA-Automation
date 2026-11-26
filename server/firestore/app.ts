@@ -30,7 +30,7 @@ export function createApp() {
       useDefaults: true,
       directives: {
         'default-src': ["'self'"], 'script-src': ["'self'"], 'style-src': ["'self'", "'unsafe-inline'"],
-        'img-src': ["'self'", 'data:', 'blob:'], 'connect-src': ["'self'"], 'frame-ancestors': ["'none'"], 'form-action': ["'self'"],
+        'img-src': ["'self'", 'data:', 'blob:'], 'connect-src': ["'self'"], 'frame-ancestors': ["'none'"], 'frame-src': ["'self'", 'blob:'], 'form-action': ["'self'"],
       },
     },
     strictTransportSecurity: config.isProd ? { maxAge: 31536000, includeSubDomains: true } : false,

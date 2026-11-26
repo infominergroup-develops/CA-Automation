@@ -335,7 +335,7 @@ export function Tabs<T extends string>({ value, onChange, items }: { value: T; o
 /* ---------------------------------------------------------------- Modal */
 
 export function Modal({ title, description, onClose, children, footer, wide }:
-  { title: string; description?: ReactNode; onClose: () => void; children: ReactNode; footer?: ReactNode; wide?: boolean }) {
+  { title: string; description?: ReactNode; onClose: () => void; children: ReactNode; footer?: ReactNode; wide?: boolean | 'full' }) {
   const ref = useRef<HTMLDivElement>(null);
   const titleId = useId();
   useEffect(() => {
@@ -359,7 +359,7 @@ export function Modal({ title, description, onClose, children, footer, wide }:
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-6">
       <div className="absolute inset-0 bg-ink-900/40 backdrop-blur-sm animate-fade-in" onClick={onClose} aria-hidden />
       <div ref={ref} role="dialog" aria-modal="true" aria-labelledby={titleId}
-        className={cx('relative w-full animate-pop-in sm:rounded-[28px] rounded-t-[28px] bg-white/60 p-1.5 ring-1 ring-white/50 shadow-pop', wide ? 'sm:max-w-2xl' : 'sm:max-w-lg')}>
+        className={cx('relative w-full animate-pop-in sm:rounded-[28px] rounded-t-[28px] bg-white/60 p-1.5 ring-1 ring-white/50 shadow-pop', wide === 'full' ? 'sm:max-w-6xl' : wide ? 'sm:max-w-2xl' : 'sm:max-w-lg')}>
         <div className="bezel-core rounded-[22px]! max-h-[90dvh] flex flex-col overflow-hidden">
           <header className="flex items-start justify-between gap-4 px-6 pt-6 pb-4">
             <div>
