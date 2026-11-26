@@ -10,7 +10,7 @@ import { db } from '../server/firestore/client.ts';
 import { C } from '../server/firestore/types.ts';
 import { createStaffUser } from '../server/firestore/users.ts';
 import { ensureSettingDefaults } from '../server/firestore/settings.ts';
-import { ensureCategories, getDocumentMeta } from '../server/firestore/documents.ts';
+import { acceptStaffUploads, ensureCategories, getDocumentMeta } from '../server/firestore/documents.ts';
 
 if (process.env.OTP_PROVIDER !== 'off') throw new Error('Run with OTP_PROVIDER=off');
 let pass = 0, fail = 0;
@@ -80,6 +80,13 @@ try {
   check('stored as client / year / document type / date_name.id.enc',
     new RegExp(`^Mehta Traders Pvt Ltd/2025-26/Bank statements/\\d{4}-\\d{2}-\\d{2}_HDFC April\\.pdf\\.${up.data[0].id}\\.enc$`).test(key), key);
   check('download still works', (await dir.get(`/api/documents/${up.data[0].id}/download`)).status === 200);
+  await cli.post('/api/privacy/consent', { purposes: ['service'], version: (await cli.get('/api/privacy/notice')).data.version });
+  const fromClient = await cli.post(`/api/companies/${companyId}/documents`, (() => { const f = new FormData(); f.append('category_id', 'others'); f.append('fy', '2025-26');
+    f.append('files', new Blob([Buffer.from('%PDF-1.4\nclient\n%%EOF\n')], { type: 'application/pdf' }), 'From client.pdf'); return f; })());
+  check('client uploads still wait for review', fromClient.status === 201 && (await getDocumentMeta(fromClient.data[0].id))?.review_status === 'pending');
+  await db.collection('documents').doc(up.data[0].id).update({ review_status: 'pending' }); // as before this change
+  check('waiting staff uploads are cleared, client ones stay', (await acceptStaffUploads()) === 1
+    && (await getDocumentMeta(up.data[0].id))?.review_status === 'accepted' && (await getDocumentMeta(fromClient.data[0].id))?.review_status === 'pending');
 
   // Firm resets the client's password
   await mgr.login('staff', 'a@firm.test', PW);
@@ -115,6 +122,8 @@ try {
   const mine = await emp.post(G, file('P&L.pdf', 'profit-and-loss', 'mine'));
   check('employee uploads to it', mine.status === 201, mine.data);
   const theirs = await dir.post(G, file('Bank.pdf', 'bank-statements', 'director'));
+  const status = async (id: string) => (await getDocumentMeta(id))?.review_status;
+  check('staff uploads need no approval', (await status(mine.data[0].id)) === 'accepted' && (await status(theirs.data[0].id)) === 'accepted');
   const seen = await emp.get(G);
   check('employee sees every file of the client they added', seen.data.length === 2, seen.data);
   check('employee downloads their own upload', (await emp.get(`/api/documents/${mine.data[0].id}/download`)).status === 200);
@@ -126,9 +135,9 @@ try {
   check('no view for someone who cannot download it', (await emp2.get(`/api/documents/${theirs.data[0].id}/download?view=1`)).status === 404 && (await views()) === 1);
   for (const [who, id] of [['own', mine.data[0].id], ['another’s', theirs.data[0].id]]) {
     check(`employee cannot delete ${who} file`, (await emp.del(`/api/documents/${id}`)).status === 403);
-    check(`employee cannot change ${who} file`, (await emp.patch(`/api/documents/${id}/review`, { status: 'accepted' })).status === 403);
+    check(`employee cannot change ${who} file`, (await emp.patch(`/api/documents/${id}/review`, { status: 'reupload', note: 'redo it' })).status === 403);
   }
-  check('both files still there, unchanged', (await dir.get(G)).data.filter((d: any) => d.review_status === 'pending').length === 2);
+  check('both files still there, unchanged', (await dir.get(G)).data.filter((d: any) => d.review_status === 'accepted').length === 2);
   check('employee cannot upload to a client they neither added nor work on', (await emp.post(`/api/companies/${companyId}/documents`, file('x.pdf', 'others', 'x'))).status === 404);
   check('employee still cannot add logins, companies, staff or tasks, or set passwords', (await Promise.all([
     emp.post(`/api/clients/${made.data.groupId}/users`), emp.post(`/api/clients/${made.data.groupId}/companies`), emp.post('/api/users'),

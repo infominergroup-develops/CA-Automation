@@ -64,6 +64,8 @@ export interface UploadInput {
   companyId: string; categoryId: string; fy: string; month: number | null; name: string; mime: string; bytes: Buffer; uploadedBy: string;
   /** Bucket folder from docFolder(). */
   folder: string;
+  /** Staff uploads need no review; only what clients send waits for it. */
+  accepted?: boolean;
   subfolder?: string;
 }
 
@@ -95,7 +97,7 @@ export async function createDocument(u: UploadInput): Promise<{ id: string; sha2
       id, company_id: u.companyId, category_id: u.categoryId, fy: u.fy, month: u.month,
       ...(u.subfolder && { subfolder: u.subfolder }), original_name: u.name, mime: u.mime, size: u.bytes.length, sha256: hash,
       wrapped_key: enc.wrappedKey, iv: enc.iv, auth_tag: enc.authTag, blob_key: key,
-      uploaded_by: u.uploadedBy, review_status: 'pending', review_note: null, reviewed_by: null,
+      uploaded_by: u.uploadedBy, review_status: u.accepted ? 'accepted' : 'pending', review_note: null, reviewed_by: null,
       deleted_at: null, deleted_by: null, created_at: now(),
     };
     await db.collection(C.documents).doc(id).set(doc);
@@ -153,6 +155,16 @@ export async function readDocument(doc: DocumentDoc): Promise<{ bytes: Buffer; m
 
 export async function reviewDocument(id: string, status: DocumentDoc['review_status'], note: string | null, reviewedBy: string): Promise<void> {
   await db.collection(C.documents).doc(id).update({ review_status: status, review_note: note, reviewed_by: reviewedBy });
+}
+
+/** Staff uploads made before they stopped needing review: takes them out of the review queue. Returns how many. */
+export async function acceptStaffUploads(): Promise<number> {
+  const waiting = await query<DocumentDoc>(C.documents, { where: [['review_status', '==', 'pending'], ['deleted_at', '==', null]] });
+  if (!waiting.length) return 0;
+  const clients = new Set((await query<{ id: string }>(C.users, { where: [['role', '==', 'client']] })).map((u) => u.id));
+  const staff = waiting.filter((d) => !clients.has(d.uploaded_by));
+  await Promise.all(staff.map((d) => db.collection(C.documents).doc(d.id).update({ review_status: 'accepted' })));
+  return staff.length;
 }
 
 /** Soft delete — the encrypted bytes are kept for the legal retention period. */

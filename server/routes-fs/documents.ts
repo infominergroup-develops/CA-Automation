@@ -65,7 +65,8 @@ documentsRouter.post('/companies/:companyId/documents', requireAuth, upload.arra
 
   const saved = [];
   for (const p of prepared) {
-    const d = await createDocument({ companyId, categoryId: b.category_id, fy: b.fy, month: b.month ?? null, name: p.name, mime: p.mime, bytes: p.f.buffer, uploadedBy: req.user!.id, folder, subfolder: b.subfolder });
+    const d = await createDocument({ companyId, categoryId: b.category_id, fy: b.fy, month: b.month ?? null, name: p.name, mime: p.mime, bytes: p.f.buffer,
+      uploadedBy: req.user!.id, folder, subfolder: b.subfolder, accepted: req.user!.role !== 'client' });
     await auditReq(req, { action: 'document.uploaded', objectType: 'document', objectId: d.id, companyId,
       details: { name: p.name, size: p.f.size, sha256: d.sha256, category_id: b.category_id, fy: b.fy, duplicateOf: d.duplicateOf?.id } });
     saved.push({ id: d.id, name: p.name, sha256: d.sha256, duplicateOf: d.duplicateOf ? { id: d.duplicateOf.id, uploadedAt: d.duplicateOf.created_at } : null });

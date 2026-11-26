@@ -23,7 +23,8 @@ if (keyB64 && !process.env.GOOGLE_APPLICATION_CREDENTIALS) {
 await loadSecretsIntoEnv();
 const { config } = await import('./config.ts');
 const { createApp } = await import('./firestore/app.ts');
-const { ensureCategories } = await import('./firestore/documents.ts');
+const { acceptStaffUploads, ensureCategories } = await import('./firestore/documents.ts');
+const { audit } = await import('./firestore/audit.ts');
 const { ensureWorkTypes } = await import('./routes-fs/master.ts');
 const { sweepStaleTimers } = await import('./firestore/time.ts');
 const { purgeExpiredChallenges } = await import('./firestore/challenges.ts');
@@ -31,6 +32,8 @@ const { purgeExpiredSessions } = await import('./firestore/sessions.ts');
 
 await ensureCategories(); // adds any document type introduced by this version
 await ensureWorkTypes();
+const accepted = await acceptStaffUploads(); // staff uploads need no review
+if (accepted) await audit({ action: 'document.staff_uploads_accepted', objectType: 'document', details: { count: accepted } });
 
 setInterval(() => {
   Promise.all([sweepStaleTimers(), purgeExpiredChallenges(), purgeExpiredSessions()])
