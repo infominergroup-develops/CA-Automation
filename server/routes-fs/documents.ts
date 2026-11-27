@@ -5,7 +5,7 @@ import { config } from '../config.ts';
 import { cleanName, detectType, zFy, zText } from '../shared.ts';
 import { assertCompany, canViewDocument, inScope, userNames } from '../firestore/authz.ts';
 import {
-  IntegrityError, cleanSubfolder, createDocument, docFolder, moveDocument, getDocumentMeta, listCategories, listDocuments, readDocument, reviewDocument, softDeleteDocument,
+  IntegrityError, cleanSubfolder, createDocument, folderPath, docFolder, moveDocument, getDocumentMeta, listCategories, listDocuments, readDocument, reviewDocument, softDeleteDocument,
 } from '../firestore/documents.ts';
 import { HttpError, auditReq, can, h, noRight, parse, requireAuth, requireRight } from '../firestore/http.ts';
 
@@ -27,6 +27,7 @@ documentsRouter.get('/companies/:companyId/documents', requireRight('view'), h(a
   // shortcut: the whole client at once, so the page can show folders; load per year past a few thousand files.
   let rows = docs.slice(0, 5000).map((d) => ({
     id: d.id, category_id: d.category_id, category: catName.get(d.category_id) ?? d.category_id, fy: d.fy, month: d.month, subfolder: d.subfolder ?? null,
+    path: folderPath(d, (id) => catName.get(id) ?? id), // the folders the file sits in, below its year
     original_name: d.original_name, mime: d.mime, size: d.size, sha256: d.sha256, review_status: d.review_status,
     review_note: d.review_note, created_at: d.created_at, uploaded_by: d.uploaded_by,
     uploaded_by_name: users.get(d.uploaded_by)?.name ?? '', uploaded_by_role: users.get(d.uploaded_by)?.role ?? '',
@@ -157,26 +158,22 @@ documentsRouter.delete('/documents/:id', requireRight('delete'), h(async (req, r
 }));
 
 /**
- * Deletes a folder: a year, a document type in a year, a month, or a folder people made, with every file in it at any
- * depth. Soft delete, like single files: the encrypted files are kept for retention. Needs the "delete folders" right.
+ * Deletes a folder (any depth below a year, or a whole year) with every file in it. Soft delete, like single files: the
+ * encrypted files are kept for retention. Needs the "delete folders" right.
  */
 documentsRouter.post('/companies/:companyId/folders/delete', requireRight('deleteFolder'), h(async (req, res) => {
   const companyId = String(req.params.companyId);
   await assertCompany(req.user!, companyId);
-  const b = parse(z.object({
-    fy: zFy,
-    category_id: zCategory.optional(),
-    month: z.number().int().min(1).max(12).optional(),
-    sub: z.string().max(1000).optional().transform((s) => (s ? cleanSubfolder(s) : '')),
-  }), req.body);
-  if (b.month && !b.category_id) throw new HttpError(400, 'Months sit inside a document type.');
-  // Same folders as the file manager shows: made folders inside a document type hold files of no month; made folders
-  // straight in the year hold files of no document type.
-  const inside = (await listDocuments(companyId)).filter((d) => d.fy === b.fy && (b.category_id ? d.category_id === b.category_id : !b.sub || !d.category_id)
-    && (b.month ? d.month === b.month : !b.sub || !d.month)
-    && (!b.sub || (d.subfolder ?? '') === b.sub || (d.subfolder ?? '').startsWith(`${b.sub}/`)));
+  const b = parse(z.object({ fy: zFy, path: z.string().max(2000).default('') }), req.body);
+  const path = b.path.split('/').filter(Boolean).join('/');
+  const name = new Map((await listCategories()).map((c) => [c.id, c.name]));
+  // The same folder paths the file manager shows.
+  const inside = (await listDocuments(companyId)).filter((d) => {
+    const p = folderPath(d, (id) => name.get(id) ?? id);
+    return d.fy === b.fy && (!path || p === path || p.startsWith(`${path}/`));
+  });
   await Promise.all(inside.map((d) => softDeleteDocument(d.id, req.user!.id)));
   await auditReq(req, { action: 'folder.deleted', objectType: 'folder', companyId,
-    details: { fy: b.fy, category_id: b.category_id ?? null, month: b.month ?? null, sub: b.sub, files: inside.length, document_ids: inside.map((d) => d.id) } });
+    details: { fy: b.fy, path, files: inside.length, document_ids: inside.map((d) => d.id) } });
   res.json({ ok: true, deleted: inside.length });
 }));

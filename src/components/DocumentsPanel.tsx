@@ -12,17 +12,17 @@ import { Button, Card, EmptyState, ErrorText, Field, IconButton, Input, LoadingR
 interface Doc {
   id: string; category_id: number; category: string; fy: string; month: number | null; original_name: string; mime: string;
   size: number; sha256: string; review_status: string; review_note: string | null; created_at: string; subfolder?: string | null;
+  /** The folders the file sits in below its year, e.g. "Bank statements/April/HDFC" (from the server). */
+  path: string;
   uploaded_by_name: string; mine?: boolean;
 }
 export interface Category { id: number; name: string }
-/** A place in the file manager, as kept in the address. */
-type Place2 = { fy?: string; folder?: string; month?: string; sub?: string };
+/** A place in the file manager, as kept in the address: a year and the folders below it. */
+type Place2 = { fy?: string; path?: string };
 
-const MONTHS = ['April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December', 'January', 'February', 'March'];
-const MONTH_NUM = [4, 5, 6, 7, 8, 9, 10, 11, 12, 1, 2, 3];
-const monthName = (m: number) => MONTHS[MONTH_NUM.indexOf(m)];
+const join = (...parts: string[]) => parts.filter(Boolean).join('/');
 /** "FY 2026-27 / Bank statements / April", or just the year for a file straight in it. */
-const whereIs = (d: { fy: string; category: string; month: number | null }) => [`FY ${d.fy}`, d.category, d.month && monthName(d.month)].filter(Boolean).join(' / ');
+const whereIs = (d: { fy: string; path: string }) => [`FY ${d.fy}`, ...d.path.split('/')].filter(Boolean).join(' / ');
 const MAX = 25e6;
 // Files the computer adds by itself, never worth uploading.
 const JUNK = /^(\.|~\$|thumbs\.db$|desktop\.ini$)/i;
@@ -37,32 +37,31 @@ function FileIcon({ mime, name }: { mime: string; name?: string }) {
 }
 
 /**
- * Documents as folders: financial year, document type, month, then any folders people made. Only folders that hold files
- * are shown. The open folder is kept in the address, so Back works.
+ * Documents as folders: a financial year, then folders inside folders, as deep as people make them. Only folders that
+ * hold files are shown. The open folder is kept in the address, so Back works.
  */
 export function DocumentsPanel({ companyId, canUpload = true }: { companyId: string; canUpload?: boolean }) {
   const u = useUser();
   const can = useRights(); // what the director lets this person do with files
   const toast = useToast();
   const confirm = useConfirm();
-  const [cats] = useLoad(() => api<Category[]>('/categories'));
   const [params, setParams] = useSearchParams();
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [moving, setMoving] = useState(false);
   const [viewing, setViewing] = useState<number | null>(null);
-  const fy = params.get('fy') ?? '', folder = params.get('folder') ?? '', month = params.get('month') ?? '', sub = params.get('sub') ?? '';
+  const fy = params.get('fy') ?? '', path = params.get('path') ?? '';
   const [makingSub, setMakingSub] = useState(false);
   const [q, setQ] = useState('');
   const [docs, loadErr, reload, loading] = useLoad(() => (can.view ? api<Doc[]>(`/companies/${companyId}/documents`) : Promise.resolve([])), [companyId, can.view]);
   // Accept or ask for re-upload: the review ("edit") right; moving files is its own right. Directors and managers unless changed.
   const managerial = can.edit && u.role !== 'client';
   const canMove = can.move && u.role !== 'client';
-  // Document-type folders are shared by every client, so only staff add them; anyone who uploads makes folders inside them.
   const staff = u.role !== 'client';
 
   const open = (to: Place2) => {
     const next = new URLSearchParams(params);
-    for (const k of ['fy', 'folder', 'month', 'sub'] as const) { next.delete(k); if (to[k]) next.set(k, to[k]); }
+    for (const k of ['fy', 'path', 'folder', 'month', 'sub'] as const) next.delete(k); // older links had folder/month/sub
+    for (const k of ['fy', 'path'] as const) if (to[k]) next.set(k, to[k]!);
     setParams(next);
     setQ('');
     setPicked(new Set());
@@ -86,7 +85,7 @@ export function DocumentsPanel({ companyId, canUpload = true }: { companyId: str
   const removeFolder = async (t: { name: string; count: number; to: Place2 }, after?: () => void) => {
     const r = await confirm({ title: `Delete the folder “${t.name}”?`, danger: true, confirmLabel: `Delete ${t.count} file${t.count > 1 ? 's' : ''}`,
       body: <>All <b>{t.count} file{t.count > 1 ? 's' : ''}</b> in it, including its inner folders, will be removed from the portal. The deletion is recorded in the audit trail.</> });
-    if (r) attempt(() => api(`/companies/${companyId}/folders/delete`, { body: { fy: t.to.fy, category_id: t.to.folder || undefined, month: t.to.month ? Number(t.to.month) : undefined, sub: t.to.sub || undefined } }).then(after), `Folder ${t.name} deleted`);
+    if (r) attempt(() => api(`/companies/${companyId}/folders/delete`, { body: { fy: t.to.fy, path: t.to.path ?? '' } }).then(after), `Folder ${t.name} deleted`);
   };
   const removePicked = (list = (docs ?? []).filter((d) => picked.has(d.id)), title?: string) => removeFiles(list, title);
   const removeFiles = async (list: Doc[], title = `Delete ${list.length} file${list.length > 1 ? 's' : ''}?`) => {
@@ -102,45 +101,26 @@ export function DocumentsPanel({ companyId, canUpload = true }: { companyId: str
   const canPick = staff && (canMove || can.delete); // ticking files to move or delete them together
   const canDelete = (d: Doc) => can.delete && (u.role !== 'client' || (!!d.mine && Date.parse(d.created_at) > Date.now() - 86400e3));
 
-  // Every file inside the open folder, at any depth. Folders people made inside a document type hold files of no month.
-  // Files straight in a year have no document type; folders made there hold such files.
-  const here = (docs ?? []).filter((d) => (!fy || d.fy === fy) && (folder ? String(d.category_id) === folder : !sub || !d.category_id)
-    && (month ? String(d.month ?? '') === month : !sub || !d.month)
-    && (!sub || (d.subfolder ?? '') === sub || (d.subfolder ?? '').startsWith(`${sub}/`)));
-  const rel = (d: Doc) => (sub ? (d.subfolder ?? '').slice(sub.length + 1) : d.subfolder ?? ''); // its folders below this one
-  const catName = cats?.find((c) => String(c.id) === folder)?.name ?? folder;
-  const count = (list: Doc[]) => list.length;
-  const madeFolders = (list: Doc[]) => [...new Set(list.map(rel).filter(Boolean).map((r) => r.split('/')[0]))].sort((a, b) => a.localeCompare(b))
-    .map((name) => ({ key: `sub:${name}`, name, count: count(list.filter((d) => rel(d).split('/')[0] === name)), to: { fy, folder, month, sub: sub ? `${sub}/${name}` : name } }));
-  const atTypeRoot = !!folder && !month && !sub;
-  const atYearRoot = !!fy && !folder && !sub;
-  // Only folders that hold files: years, document types and months appear once something is uploaded into them.
+  // Every file inside the open folder, at any depth.
+  const here = (docs ?? []).filter((d) => (!fy || d.fy === fy) && (!path || d.path === path || d.path.startsWith(`${path}/`)));
+  const rel = (d: Doc) => (path ? d.path.slice(path.length + 1) : d.path); // its folders below the open one
+  // Only folders that hold files: a year or folder appears once something is uploaded into it.
   const tiles = !docs || q ? []
-    : !fy ? [...new Set(here.map((d) => d.fy))].sort().reverse().map((y) => ({ key: y, name: `FY ${y}`, count: count(here.filter((d) => d.fy === y)), to: { fy: y } as Place2 }))
-      : atYearRoot ? [
-        ...(cats ?? []).map((c) => ({ key: String(c.id), name: c.name, count: count(here.filter((d) => d.category_id === c.id)), to: { fy, folder: String(c.id) } as Place2 })).filter((t) => t.count),
-        ...madeFolders(here.filter((d) => !d.category_id)),
-      ]
-        : atTypeRoot ? [
-          ...MONTHS.map((m, i) => ({ key: m, name: m, count: count(here.filter((d) => d.month === MONTH_NUM[i])), to: { fy, folder, month: String(MONTH_NUM[i]) } as Place2 })).filter((t) => t.count),
-          ...madeFolders(here.filter((d) => !d.month)),
-        ]
-          : madeFolders(here);
-  // Files sitting directly in the open folder: in a year, those of no document type; in a type, those of no month.
-  const files = q ? here.filter((d) => `${d.original_name} ${d.subfolder ?? ''}`.toLowerCase().includes(q.toLowerCase()))
-    : atYearRoot ? here.filter((d) => !d.category_id && !rel(d)) : atTypeRoot ? here.filter((d) => !d.month && !rel(d)) : fy ? here.filter((d) => !rel(d)) : [];
-  const subParts = sub ? sub.split('/') : [];
+    : !fy ? [...new Set(here.map((d) => d.fy))].sort().reverse().map((y) => ({ key: y, name: `FY ${y}`, count: here.filter((d) => d.fy === y).length, to: { fy: y } as Place2 }))
+      : [...new Set(here.map(rel).filter(Boolean).map((r) => r.split('/')[0]))].sort((a, b) => a.localeCompare(b))
+        .map((name) => ({ key: name, name, count: here.filter((d) => rel(d).split('/')[0] === name).length, to: { fy, path: join(path, name) } as Place2 }));
+  // Files sitting directly in the open folder.
+  const files = q ? here.filter((d) => `${d.original_name} ${d.path}`.toLowerCase().includes(q.toLowerCase())) : fy ? here.filter((d) => !rel(d)) : [];
+  const pathParts = path ? path.split('/') : [];
   const crumbs = [
     { name: 'All years', go: () => open({}) },
     ...(fy ? [{ name: `FY ${fy}`, go: () => open({ fy }) }] : []),
-    ...(folder ? [{ name: catName, go: () => open({ fy, folder }) }] : []),
-    ...(month ? [{ name: monthName(Number(month)), go: () => open({ fy, folder, month }) }] : []),
-    ...subParts.map((p, i) => ({ name: p, go: () => open({ fy, folder, month, sub: subParts.slice(0, i + 1).join('/') }) })),
+    ...pathParts.map((p, i) => ({ name: p, go: () => open({ fy, path: pathParts.slice(0, i + 1).join('/') }) })),
   ];
 
   return (
     <div className="space-y-6">
-      {canUpload && <UploadZone key={`${fy}|${folder}|${month}|${sub}`} companyId={companyId} cats={cats ?? []} all={docs ?? []} at={{ fy, folder, month, sub }} onDone={reload} />}
+      {canUpload && <UploadZone key={`${fy}|${path}`} companyId={companyId} all={docs ?? []} at={{ fy, path }} onDone={reload} />}
 
       {!can.view ? (
         <Card title="Documents">
@@ -172,7 +152,7 @@ export function DocumentsPanel({ companyId, canUpload = true }: { companyId: str
             </Button>
           )}
           {staff && can.deleteFolder && !q && fy && here.length > 0 && (
-            <Button size="sm" variant="danger" icon={Trash2} onClick={() => removeFolder({ name: crumbs.at(-1)!.name, count: here.length, to: { fy, folder, month, sub } }, () => crumbs.at(-2)?.go())}>
+            <Button size="sm" variant="danger" icon={Trash2} onClick={() => removeFolder({ name: crumbs.at(-1)!.name, count: here.length, to: { fy, path } }, () => crumbs.at(-2)?.go())}>
               Delete this folder
             </Button>
           )}
@@ -195,7 +175,7 @@ export function DocumentsPanel({ companyId, canUpload = true }: { companyId: str
                     )}
                   </li>
                 ))}
-                {!q && !!fy && canUpload && subParts.length < 5 && (
+                {!q && !!fy && canUpload && pathParts.length < 10 && (
                   <li>
                     <button type="button" onClick={() => setMakingSub(true)} className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left border-2 border-dashed border-line text-brand-700 hover:border-brand-500 hover:bg-brand-50/40 transition-colors">
                       <FolderPlus className="size-5 shrink-0" aria-hidden /><span className="text-sm font-semibold">New folder</span>
@@ -215,7 +195,7 @@ export function DocumentsPanel({ companyId, canUpload = true }: { companyId: str
                 {!!picked.size && can.delete && <Button size="sm" variant="danger" icon={Trash2} onClick={() => removePicked()}>Delete {picked.size} file{picked.size > 1 ? 's' : ''}</Button>}
               </div>
             )}
-            {!!files.length && !!tiles.length && <p className="px-5 pb-2 text-[13px] font-semibold text-slate-500">{atTypeRoot ? 'Not for a particular month' : atYearRoot ? 'Files in this year' : 'Files in this folder'}</p>}
+            {!!files.length && !!tiles.length && <p className="px-5 pb-2 text-[13px] font-semibold text-slate-500">{path ? 'Files in this folder' : 'Files in this year'}</p>}
             {!files.length && !tiles.length && (
               <EmptyState icon={FolderOpen} title={q ? 'No matching documents' : !fy ? 'No files yet' : 'This folder is empty'}>
                 {q ? 'Try a different search.' : canUpload ? `Upload files or a whole folder above. They are encrypted as soon as they arrive.${fy ? ' An empty folder is not kept: it stays once a file is in it.' : ''}` : ''}
@@ -235,7 +215,6 @@ export function DocumentsPanel({ companyId, canUpload = true }: { companyId: str
                         <button type="button" onClick={() => setViewing(files.indexOf(d))} className="text-left text-sm font-semibold text-ink break-all hover:text-brand-700 hover:underline">{d.original_name}</button>
                         <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-slate-500 mt-0.5">
                           {q && <><span>{whereIs(d)}</span><span aria-hidden>·</span></>}
-                          {d.subfolder && <><span className="break-all">{d.subfolder}</span><span aria-hidden>·</span></>}
                           <span>{fmtSize(d.size)}</span><span aria-hidden>·</span>
                           <span>{d.uploaded_by_name}, {fmtDateTime(d.created_at)}</span>
                         </div>
@@ -267,9 +246,9 @@ export function DocumentsPanel({ companyId, canUpload = true }: { companyId: str
         <FileViewer docs={files} index={viewing} onIndex={setViewing} onClose={() => setViewing(null)} onDownload={can.download ? get : undefined} />
       )}
       {makingSub && <NewSubfolder taken={tiles.map((t) => t.name)} onClose={() => setMakingSub(false)}
-        onDone={(name) => { setMakingSub(false); open({ fy, folder, month, sub: sub ? `${sub}/${name}` : name }); }} />}
-      {moving && cats && (
-        <MoveFiles docs={(docs ?? []).filter((d) => picked.has(d.id))} all={docs ?? []} cats={cats} at={{ fy, folder, month, sub }}
+        onDone={(name) => { setMakingSub(false); open({ fy, path: join(path, name) }); }} />}
+      {moving && (
+        <MoveFiles docs={(docs ?? []).filter((d) => picked.has(d.id))} all={docs ?? []} at={{ fy, path }}
           onClose={() => setMoving(false)} onDone={() => { setMoving(false); setPicked(new Set()); reload(); }} />
       )}
     </div>
@@ -293,47 +272,35 @@ function NewSubfolder({ taken, onClose, onDone }: { taken: string[]; onClose: ()
   );
 }
 
-/** One folder a file can be moved into: a document type, a month in it, or a folder people made (anywhere). */
-interface Spot { key: string; category: string; month: string; sub: string; label: string }
-
-/** Every folder this client already has in a year, from its files (so only existing folders are offered). */
-function spotsIn(docs: Doc[], fy: string, cats: Category[]): Spot[] {
-  const name = (id: string) => cats.find((c) => String(c.id) === id)?.name ?? id;
-  const spots = new Map<string, Spot>();
-  const add = (category: string, month: string, sub: string) => {
-    const key = `${category}|${month}|${sub}`;
-    if (!spots.has(key)) spots.set(key, { key, category, month, sub, label: [category && name(category), month && monthName(Number(month)), ...sub.split('/')].filter(Boolean).join(' / ') });
-  };
+/** Every folder this client already has in a year, at any depth, from its files (so only existing folders are offered). */
+function foldersIn(docs: Doc[], fy: string): string[] {
+  const out = new Set<string>();
   for (const d of docs.filter((x) => x.fy === fy)) {
-    const category = d.category_id ? String(d.category_id) : '', month = category && d.month ? String(d.month) : '';
-    if (category) add(category, '', '');
-    if (month) add(category, month, '');
-    const parts = (d.subfolder ?? '').split('/').filter(Boolean);
-    parts.forEach((_, i) => add(category, month, parts.slice(0, i + 1).join('/')));
+    const parts = d.path.split('/').filter(Boolean);
+    parts.forEach((_, i) => out.add(parts.slice(0, i + 1).join('/')));
   }
-  return [...spots.values()].sort((a, b) => a.label.localeCompare(b.label));
+  return [...out].sort((a, b) => a.localeCompare(b));
 }
+const label = (p: string) => p.split('/').join(' / ');
+/** A new folder's name, by the server's rules: no slashes or control characters, no leading dots. */
+const cleanName = (s: string) => s.replace(/[\u0000-\u001f\u007f/\\]/g, ' ').replace(/^\.+/, '').trim();
 
 /** Moves the chosen files into a folder this client already has, or into a new folder made inside one. */
-function MoveFiles({ docs, all, cats, at, onClose, onDone }: { docs: Doc[]; all: Doc[]; cats: Category[]; at: { fy: string; folder: string; month: string; sub: string }; onClose: () => void; onDone: () => void }) {
+function MoveFiles({ docs, all, at, onClose, onDone }: { docs: Doc[]; all: Doc[]; at: { fy: string; path: string }; onClose: () => void; onDone: () => void }) {
   const toast = useToast();
   const [fy, setFy] = useState(at.fy || docs[0]?.fy || currentFy());
-  const spots = spotsIn(all, fy, cats);
-  const here = `${at.folder}|${at.folder ? at.month : ''}|${at.sub}`;
-  const [spot, setSpot] = useState(fy === at.fy && spots.some((x) => x.key === here) ? here : '||');
+  const folders = foldersIn(all, fy);
+  const [dest, setDest] = useState(fy === at.fy && folders.includes(at.path) ? at.path : '');
   const [fresh, setFresh] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<unknown>();
-  const chosen = spots.find((x) => x.key === spot) ?? { category: '', month: '', sub: '' };
-  const newName = fresh.replace(/[\u0000-\u001f\u007f/\\]/g, ' ').replace(/^\.+/, '').trim();
+  const newName = cleanName(fresh);
+  const target = join(dest, newName);
   const move = async () => {
     setBusy(true); setErr(undefined);
     let failed = 0;
-    const subfolder = [chosen.sub, newName].filter(Boolean).join('/');
     for (const d of docs) {
-      try {
-        await api(`/documents/${d.id}/move`, { body: { fy, category_id: chosen.category || null, month: chosen.month ? Number(chosen.month) : null, subfolder } });
-      } catch { failed++; }
+      try { await api(`/documents/${d.id}/move`, { body: { fy, category_id: null, month: null, subfolder: target } }); } catch { failed++; }
     }
     setBusy(false);
     const moved = docs.length - failed;
@@ -345,15 +312,15 @@ function MoveFiles({ docs, all, cats, at, onClose, onDone }: { docs: Doc[]; all:
       footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button busy={busy} icon={FolderInput} onClick={move}>Move</Button></>}>
       <div className="space-y-4">
         <Field label="Financial year">
-          <Select value={fy} onChange={(e) => { setFy(e.target.value); setSpot('||'); }}>{[...new Set([...fyOptions(), ...all.map((d) => d.fy), fy])].sort().reverse().map((f) => <option key={f} value={f}>FY {f}</option>)}</Select>
+          <Select value={fy} onChange={(e) => { setFy(e.target.value); setDest(''); }}>{[...new Set([...fyOptions(), ...all.map((d) => d.fy), fy])].sort().reverse().map((f) => <option key={f} value={f}>FY {f}</option>)}</Select>
         </Field>
         <Field label="Move into">
-          <Select value={spot} onChange={(e) => setSpot(e.target.value)}>
-            <option value="||">Straight in FY {fy}, no folder</option>
-            {spots.map((x) => <option key={x.key} value={x.key}>{x.label}</option>)}
+          <Select value={dest} onChange={(e) => setDest(e.target.value)}>
+            <option value="">Straight in FY {fy}, no folder</option>
+            {folders.map((f) => <option key={f} value={f}>{label(f)}</option>)}
           </Select>
         </Field>
-        <Field label="New folder inside it" optional hint={newName ? `The files go into ${[`FY ${fy}`, ...(chosen.sub || chosen.category ? [spots.find((x) => x.key === spot)?.label] : []), newName].filter(Boolean).join(' / ')}.` : 'Leave empty to move them straight into the folder above.'}>
+        <Field label="New folder inside it" optional hint={newName ? `The files go into FY ${fy} / ${label(target)}.` : 'Leave empty to move them straight into the folder above.'}>
           <Input value={fresh} maxLength={40} onChange={(e) => setFresh(e.target.value)} placeholder="e.g. HDFC current account" />
         </Field>
         <ErrorText error={err} />
@@ -388,18 +355,13 @@ async function readDropped(data: DataTransfer): Promise<Picked[]> {
 }
 
 /**
- * Never holds a file back for its folder: with no folder chosen it goes to Others, keeping its own folder names. Staff
- * uploading a folder of their own layout (year / type / month) get its unknown document types added as new folders.
- */
-/**
  * Uploads into a folder this client already has (or the open one), straight into the year, or into a new folder made
- * inside the chosen one. An uploaded folder keeps its own inner folders.
+ * inside the chosen one. An uploaded folder keeps its own inner folders, however deep.
  */
-function UploadZone({ companyId, cats, all, at, onDone }: { companyId: string; cats: Category[]; all: Doc[]; at: { fy: string; folder: string; month: string; sub: string }; onDone: () => void }) {
+function UploadZone({ companyId, all, at, onDone }: { companyId: string; all: Doc[]; at: { fy: string; path: string }; onDone: () => void }) {
   const toast = useToast();
   const [fy, setFy] = useState(at.fy || currentFy());
-  const openKey = `${at.folder}|${at.folder ? at.month : ''}|${at.sub}`;
-  const [spot, setSpot] = useState(at.fy ? openKey : '||');
+  const [dest, setDest] = useState(at.fy ? at.path : '');
   const [fresh, setFresh] = useState('');
   const [files, setFiles] = useState<Picked[]>([]);
   const [drag, setDrag] = useState(false);
@@ -412,21 +374,12 @@ function UploadZone({ companyId, cats, all, at, onDone }: { companyId: string; c
   const onDrop = (e: DragEvent) => { e.preventDefault(); setDrag(false); setErr(undefined); readDropped(e.dataTransfer).then(add).catch(setErr); };
 
   // Only folders this client has in the year, plus the open one (it may be a folder just made, with nothing in it yet).
-  const spots = spotsIn(all, fy, cats);
-  if (fy === at.fy && openKey !== '||' && !spots.some((x) => x.key === openKey)) {
-    spots.unshift({ key: openKey, category: at.folder, month: at.folder ? at.month : '', sub: at.sub,
-      label: [cats.find((c) => String(c.id) === at.folder)?.name, at.month && monthName(Number(at.month)), ...at.sub.split('/')].filter(Boolean).join(' / ') });
-  }
-  const chosen = spots.find((x) => x.key === spot) ?? { category: '', month: '', sub: '' };
-  const newName = fresh.replace(/[\u0000-\u001f\u007f/\\]/g, ' ').replace(/^\.+/, '').trim();
-  // The chosen folder is fixed; inside a made folder so are its type ('' = none) and month. Whatever is not fixed comes
-  // from an uploaded folder's own names (a year, type or month it names), the rest is kept as inner folders.
-  const deeper = !!(chosen.sub || newName);
-  const fixed: Partial<Place> = { fy, ...((chosen.category || deeper) && { category: chosen.category }), ...((chosen.month || deeper) && { month: chosen.month }) };
-  const prefix = [chosen.sub, newName].filter(Boolean).join('/');
+  const folders = foldersIn(all, fy);
+  if (fy === at.fy && at.path && !folders.includes(at.path)) folders.unshift(at.path);
+  const into = join(dest, cleanName(fresh));
   const planned = files.map((f) => {
-    const p = placeFile(f.path, fixed, { category: chosen.category, fy, month: chosen.month }, cats);
-    return { ...f, place: { ...p, sub: [prefix, p.sub].filter(Boolean).join('/') } };
+    const p = placeFile(f.path, at.fy ? fy : undefined, fy);
+    return { ...f, place: { fy: p.fy, sub: join(into, p.sub) } };
   });
   const ready = planned.filter((f) => f.file.size <= MAX);
 
@@ -441,7 +394,7 @@ function UploadZone({ companyId, cats, all, at, onDone }: { companyId: string; c
       for (let f = queue.shift(); f; f = queue.shift()) {
         try {
           const fd = new FormData();
-          fd.append('category_id', f.place.category); fd.append('fy', f.place.fy); fd.append('month', f.place.month); fd.append('subfolder', f.place.sub);
+          fd.append('fy', f.place.fy); fd.append('subfolder', f.place.sub);
           fd.append('files', f.file);
           const [saved] = await api<{ duplicateOf: unknown }[]>(`/companies/${companyId}/documents`, { body: fd });
           if (saved.duplicateOf) dups++;
@@ -460,19 +413,19 @@ function UploadZone({ companyId, cats, all, at, onDone }: { companyId: string; c
   };
 
   const busy = !!progress;
-  const label = (p: Place) => [`FY ${p.fy}`, cats.find((c) => String(c.id) === p.category)?.name, p.month && monthName(Number(p.month)), p.sub].filter(Boolean).join(' / ');
+  const where = (p: Place) => [`FY ${p.fy}`, ...p.sub.split('/')].filter(Boolean).join(' / ');
   const pickerClass = 'font-semibold text-brand-700 cursor-pointer hover:underline focus-within:ring-2 focus-within:ring-brand-500 rounded';
 
   return (
     <Card title="Upload documents" description="Files are encrypted the moment they reach us. Any file up to 25 MB, except programs and scripts.">
       <div className="grid sm:grid-cols-3 gap-4">
         <Field label="Financial year">
-          <Select value={fy} disabled={!!at.fy || busy} onChange={(e) => { setFy(e.target.value); setSpot('||'); }}>{[...new Set([...fyOptions(), ...all.map((d) => d.fy), fy])].sort().reverse().map((f) => <option key={f} value={f}>FY {f}</option>)}</Select>
+          <Select value={fy} disabled={!!at.fy || busy} onChange={(e) => { setFy(e.target.value); setDest(''); }}>{[...new Set([...fyOptions(), ...all.map((d) => d.fy), fy])].sort().reverse().map((f) => <option key={f} value={f}>FY {f}</option>)}</Select>
         </Field>
         <Field label="Folder">
-          <Select value={spot} disabled={busy} onChange={(e) => setSpot(e.target.value)}>
-            <option value="||">None, straight in FY {fy}</option>
-            {spots.map((x) => <option key={x.key} value={x.key}>{x.label}</option>)}
+          <Select value={dest} disabled={busy} onChange={(e) => setDest(e.target.value)}>
+            <option value="">None, straight in FY {fy}</option>
+            {folders.map((f) => <option key={f} value={f}>{label(f)}</option>)}
           </Select>
         </Field>
         <Field label="New folder inside it" optional>
@@ -501,7 +454,7 @@ function UploadZone({ companyId, cats, all, at, onDone }: { companyId: string; c
                 <FileIcon mime={f.file.type} name={f.file.name} />
                 <span className="min-w-0 flex-1">
                   <span className="block text-sm font-medium text-ink truncate">{f.file.name}</span>
-                  <span className={`block text-xs ${problem ? 'text-red-700' : 'text-slate-500'}`}>{problem ? `${problem} · ` : ''}{label(f.place)} · {fmtSize(f.file.size)}</span>
+                  <span className={`block text-xs ${problem ? 'text-red-700' : 'text-slate-500'}`}>{problem ? `${problem} · ` : ''}{where(f.place)} · {fmtSize(f.file.size)}</span>
                 </span>
                 {!busy && <IconButton label={`Remove ${f.file.name}`} icon={X} onClick={() => setFiles((x) => x.filter((y) => y.file !== f.file))} />}
               </li>

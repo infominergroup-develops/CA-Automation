@@ -74,9 +74,26 @@ export interface UploadInput {
 export const segment = (s: string) => s.replace(/[\u0000-\u001f\u007f/\\]/g, '_').trim().replace(/^\.+/, '_').slice(0, 100) || '_';
 
 /** Safe form of an uploaded folder's inner path; short, because a bucket path may be at most 1,024 bytes in all. */
-export const cleanSubfolder = (path: string) => path.split('/').filter(Boolean).slice(0, 5).map(segment).join('/').slice(0, 90).replace(/\/+$/, '');
+/**
+ * Safe form of a folder path people made: up to ten levels, and at most 270 bytes in all, because a bucket path may be
+ * at most 1,024 bytes (the client and file names take the rest).
+ */
+export function cleanSubfolder(path: string): string {
+  let out = path.split('/').filter(Boolean).slice(0, 10).map(segment).join('/');
+  while (Buffer.byteLength(out) > 270) out = out.slice(0, -1);
+  return out.replace(/\/+$/, '');
+}
+
+/**
+ * The folder path a file shows in, below its year: its document type and month (files filed before folders were free
+ * have them), then the folders people made. A "/" inside a type's name, as in TDS / TCS, is shown as a look-alike.
+ */
+export const folderPath = (d: { category_id: string; month: number | null; subfolder?: string }, typeName: (id: string) => string) =>
+  [d.category_id ? typeName(d.category_id).replace(/\//g, '∕') : '', d.category_id && d.month ? MONTH_NAMES[d.month - 1] : '', ...(d.subfolder ?? '').split('/')]
+    .filter(Boolean).join('/');
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const MONTH_NAMES = MONTHS;
 /** `2026-04 April` … `2027-03 March`, so a financial year's months sort in order. */
 const monthFolder = (fy: string, month: number) => `${Number(fy.slice(0, 4)) + (month < 4 ? 1 : 0)}-${String(month).padStart(2, '0')} ${MONTHS[month - 1]}`;
 

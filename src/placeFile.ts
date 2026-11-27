@@ -1,55 +1,19 @@
-/** Where a file goes: folder (category id), financial year, month ('' = none) and any inner folders to keep. */
-export interface Place { category: string; fy: string; month: string; sub: string; /** An unknown folder name that looks like a document type, e.g. Bookkeeping. */ newFolder?: string }
-
-const MONTH_NAMES = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
-// Common short names for folders that share no first word with ours.
-const ALIASES: Record<string, string> = { pl: 'profitandloss', pnl: 'profitandloss', itr: 'incometax', pf: 'payrollandpfesi', esi: 'payrollandpfesi', salary: 'payrollandpfesi', mca: 'rocmca' };
-const norm = (s: string) => s.toLowerCase().replace(/&/g, '').replace(/[^a-z0-9]/g, '').replace(/s$/, '');
+/** Where a picked file goes: its financial year, and the folders it came in to keep below that. */
+export interface Place { fy: string; sub: string }
 
 function readFy(dir: string): string | undefined {
   const m = dir.match(/(?:^|\D)(20\d{2})\s*[-–_/ ]\s*(?:20)?(\d{2})(?:\D|$)/);
   return m && Number(m[2]) === (Number(m[1]) + 1) % 100 ? `${m[1]}-${m[2]}` : undefined;
 }
 
-function readMonth(dir: string): string | undefined {
-  // "April", "apr", "04 April", "2026-04 April", "Apr-26"; the whole name must be a month, so "Marketing" is not March.
-  const m = dir.toLowerCase().match(/^(?:[\d\s._-]+)?([a-z]+)(?:[\s'._-]*\d{2,4})?$/);
-  const i = m ? MONTH_NAMES.findIndex((n) => m[1] === n || m[1] === n.slice(0, 3) || (n === 'september' && m[1] === 'sept')) : -1;
-  return i < 0 ? undefined : String(i + 1);
-}
-
-function readCategory(dir: string, cats: { id: string | number; name: string }[]): string | undefined {
-  const d = norm(dir);
-  const hit = cats.find((c) => norm(c.name) === d || norm(c.name.split(/[\s/]/)[0]) === d || norm(c.name) === norm(ALIASES[d] ?? ''));
-  return hit && String(hit.id);
-}
-
 /**
- * Files a picked file by the names of the folders it came in. The folder the user has open (`fixed`) always wins;
- * otherwise a recognised year, document type or month is used, and whatever is left is kept as inner folders.
+ * Files a picked file by the folders it came in. A folder named after a financial year (2025-26, FY 2025-2026) sets
+ * the year, unless a year is already open (`openFy`); that folder and any above it (such as the client's own name)
+ * are dropped. Every other folder is kept, in order, however deep.
  */
-export function placeFile(path: string, fixed: Partial<Place>, chosen: Omit<Place, 'sub'>, cats: { id: string | number; name: string }[], noMonths = false): Place {
-  const found: Partial<Place> = {};
-  const rest: string[] = [];
+export function placeFile(path: string, openFy: string | undefined, fy: string): Place {
   const dirs = path.split('/').slice(0, -1);
-  let wrapper = false; // the top folder has a name that means nothing to us, such as the client's
-  const kinds = dirs.map((dir) => {
-    const guesses = { fy: readFy(dir), month: noMonths ? undefined : readMonth(dir), category: readCategory(dir, cats) };
-    return { guesses, key: (['fy', 'month', 'category'] as const).find((k) => guesses[k]) };
-  });
-  dirs.forEach((dir, i) => {
-    const { guesses, key } = kinds[i];
-    if (i === 0 && !key) wrapper = true;
-    if (key && fixed[key] === guesses[key]) return; // it names the folder already open
-    if (key && fixed[key] === undefined && found[key] === undefined) found[key] = guesses[key];
-    else rest.push(dir);
-  });
-  if (wrapper && Object.keys(found).length) rest.shift();
-  // Laid out as year / type / month: an unknown name right after the year (or at the top, inside an open year) is a type.
-  const afterYear = kinds.findIndex((k) => k.key === 'fy');
-  const candidate = fixed.category || found.category ? -1 : afterYear >= 0 ? afterYear + 1 : fixed.fy ? 0 : -1;
-  const newFolder = candidate >= 0 && candidate < dirs.length && !kinds[candidate].key ? dirs[candidate] : undefined;
-  const place = { ...chosen, ...found, ...fixed, sub: rest.join('/'), ...(newFolder && { newFolder }) };
-  // A month sits inside a document type; with none, a month folder such as "April" is kept as a made folder.
-  return !place.category && found.month !== undefined ? placeFile(path, fixed, chosen, cats, true) : place;
+  const at = dirs.findIndex((d) => (openFy ? readFy(d) === openFy : !!readFy(d)));
+  if (at < 0) return { fy: openFy ?? fy, sub: dirs.join('/') };
+  return { fy: openFy ?? readFy(dirs[at])!, sub: dirs.slice(at + 1).join('/') };
 }

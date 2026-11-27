@@ -295,12 +295,12 @@ try {
   await put('bank-statements', 'hdfc-1.pdf', { subfolder: 'HDFC' }); await put('bank-statements', 'hdfc-2.pdf', { subfolder: 'HDFC/Current' });
   await put('bank-statements', 'sbi.pdf', { subfolder: 'SBI' }); await put('bank-statements', 'apr.pdf', { month: '4' }); await put('bank-statements', 'may.pdf', { month: '5' });
   const left = async () => ((await dir.get(J)).data as any[]).map((d) => d.original_name).sort().join();
-  check('folder delete is directors-only by default', (await mgr.post(JF, { fy: '2026-27', category_id: 'bank-statements', sub: 'HDFC' })).status === 403);
-  check('a month needs its document type', (await dir.post(JF, { fy: '2026-27', month: 4 })).status === 400);
-  check('director deletes a made folder with its inner folders', (await dir.post(JF, { fy: '2026-27', category_id: 'bank-statements', sub: 'HDFC' })).data.deleted === 2
+  check('folder delete is directors-only by default', (await mgr.post(JF, { fy: '2026-27', path: 'Bank statements/HDFC' })).status === 403);
+  check('files from before free folders show their type and month as folders', ((await dir.get(J)).data as any[]).find((d) => d.original_name === 'apr.pdf')?.path === 'Bank statements/April');
+  check('director deletes a made folder with its inner folders', (await dir.post(JF, { fy: '2026-27', path: 'Bank statements/HDFC' })).data.deleted === 2
     && (await left()) === 'apr.pdf,itr.pdf,may.pdf,sbi.pdf');
   await dir.put(`/api/users/${mgrId}/rights`, { rights: R(true, true, true, false, true) });
-  check('a manager given the right deletes a month', (await mgr.post(JF, { fy: '2026-27', category_id: 'bank-statements', month: 4 })).data.deleted === 1 && (await left()) === 'itr.pdf,may.pdf,sbi.pdf');
+  check('a manager given the right deletes a month', (await mgr.post(JF, { fy: '2026-27', path: 'Bank statements/April' })).data.deleted === 1 && (await left()) === 'itr.pdf,may.pdf,sbi.pdf');
   check('...and a whole year', (await mgr.post(JF, { fy: '2026-27' })).data.deleted === 3 && (await left()) === '');
   await dir.put(`/api/users/${userId}/rights`, { rights: R(true, false, true, true, true) });
   check('clients never get folder delete', (await dir.get('/api/rights')).data.find((p: any) => p.id === userId).rights.deleteFolder === false
@@ -320,7 +320,7 @@ try {
     && await (async () => { const m = await getDocumentMeta(typed.data[0].id); return m?.category_id === '' && m.subfolder === 'Property/Old' && m.blob_key.startsWith('Joshi Steels/2026-27/Property/Old/'); })());
   check('deleting a year\'s own folder leaves typed files alone', await (async () => {
     await put('bank-statements', 'keep.pdf', { subfolder: 'Property' });
-    const r = await dir.post(JF, { fy: '2026-27', sub: 'Property' });
+    const r = await dir.post(JF, { fy: '2026-27', path: 'Property' });
     return r.data.deleted === 2 && (await left()) === 'keep.pdf,loose.pdf';
   })());
   // Managers see every client until the director limits them in Client access.
@@ -332,6 +332,15 @@ try {
   check('...and gets the ones ticked for them', (await dir.put(`/api/users/${mgrId}/clients`, { company_ids: [quiet.data.companyId], all_clients: false })).status === 200 && await seesJoshi());
   check('a manager cannot change their own access', (await mgr.put(`/api/users/${mgrId}/clients`, { company_ids: [], all_clients: true })).status === 403);
   check('every client again', (await dir.put(`/api/users/${mgrId}/clients`, { company_ids: [], all_clients: true })).status === 200 && (await mgr.get(G)).status === 200 && await seesJoshi());
+  // Free folders: any depth, and moving into a folder that files from before already show.
+  const deep = await plainUp('deep.pdf', { subfolder: 'A/B/C/D/E/F/G/H' });
+  check('folders nest deeper than five levels', (await getDocumentMeta(deep.data[0].id))?.subfolder === 'A/B/C/D/E/F/G/H');
+  const typedApr = await put('bank-statements', 'typed-apr.pdf', { month: '4' });
+  const loose2 = await plainUp('loose2.pdf', {});
+  await dir.post(`/api/documents/${loose2.data[0].id}/move`, { fy: '2026-27', category_id: null, month: null, subfolder: 'Bank statements/April' });
+  const paths = Object.fromEntries(((await dir.get(J)).data as any[]).map((d) => [d.original_name, d.path]));
+  check('a moved file joins the same folder as an older typed one', paths['typed-apr.pdf'] === 'Bank statements/April' && paths['loose2.pdf'] === 'Bank statements/April', paths);
+  check('deleting that folder takes both', (await dir.post(JF, { fy: '2026-27', path: 'Bank statements/April' })).data.deleted === 2 && !!typedApr);
   // Two clients may share an owner's email and mobile; each login has its own username.
   const shared = await dir.post('/api/clients', { group_name: 'Mehta Retail', company: { legal_name: 'Mehta Retail LLP' },
     contact: { name: 'Ravi Mehta', mobile: '9876543210', email: 'ravi@mehta.test', password: 'retail pass 2026', username: 'ravi.retail' } });

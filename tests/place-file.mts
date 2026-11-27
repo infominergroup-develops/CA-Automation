@@ -1,35 +1,17 @@
-/** Where files from an uploaded folder are filed. Run: npm run test:place */
+/** Where files from an uploaded folder are filed: a year from the folder names, everything else kept. Run: npm run test:place */
 import assert from 'node:assert/strict';
 import { placeFile } from '../src/placeFile.ts';
-const cats = ['Bank statements', 'Registrations', 'Profit and loss', 'Sales invoices', 'GST documents', 'TDS / TCS', 'Payroll and PF/ESI', 'Income tax', 'ROC / MCA', 'Others'].map((name) => ({ id: name.toLowerCase().replace(/[^a-z0-9]+/g, '-'), name }));
-const chosen = { category: '', fy: '2026-27', month: '' };
-const at = (path: string, fixed = {}) => { const p = placeFile(path, fixed, chosen, cats); return [p.fy, p.category, p.month, p.sub].join('|') + (p.newFolder ? ` new:${p.newFolder}` : ''); };
-const cases: [string, string, object?][] = [
-  ['a.pdf', '2026-27|||'],
-  ['Mehta/FY 2025-26/Bank Statement/April/a.pdf', '2025-26|bank-statements|4|'],
-  ['2024-2025/GST/Sept/a.pdf', '2024-25|gst-documents|9|'],
-  ['Mehta/2025-26/P&L/a.pdf', '2025-26|profit-and-loss||'],
-  ['X/Registration/GST certificate/a.pdf', '2026-27|registrations||GST certificate'],
-  ['X/ITR/2025_26/a.pdf', '2025-26|income-tax||'],
-  ['X/TDS/2026-04 April/a.pdf', '2026-27|tds-tcs|4|'],
-  ['X/PF/Apr-26/a.pdf', '2026-27|payroll-and-pf-esi|4|'],
-  ['X/roc/a.pdf', '2026-27|roc-mca||'],
-  // The firm's own layout: year / type / month, with a type the portal does not have yet
-  ['Infominer data/2025-26/Bookkeeping/April/a.pdf', '2025-26|||Bookkeeping/April new:Bookkeeping'], // no type: the month is kept as a folder
-  ['2025-26/Bookkeeping/a.pdf', '2025-26|||Bookkeeping new:Bookkeeping'],
-  ['Bookkeeping/May/a.pdf', '2026-27|||Bookkeeping/May new:Bookkeeping', { fy: '2026-27' }], // inside an open year
-  ['April/a.pdf', '2026-27|||April'],                       // a month with no type is just a folder
-  ['HDFC/April/a.pdf', '2026-27|||HDFC/April new:HDFC', { fy: '2026-27', category: '' }], // inside a year's own made folder
-  ['2025-26/GST/April/a.pdf', '2025-26|gst-documents|4|'],                               // known type: nothing to create
-  ['Scans/a.pdf', '2026-27|||Scans'],                                                     // no year: not guessed
-  ['Marketing/a.pdf', '2026-27|||Marketing'],              // not March
-  ['2025-27/a.pdf', '2026-27|||2025-27'],                  // not a financial year
-  ['Scans/HDFC/a.pdf', '2026-27|||Scans/HDFC'],            // nothing recognised: keep all
-  ['Mehta/Delhi branch/Bank/HDFC/a.pdf', '2026-27|bank-statements||Delhi branch/HDFC'],
-  ['X/GST/Sales/a.pdf', '2026-27|gst-documents||Sales'],   // first type wins, the second is kept
-  ['GST/May/a.pdf', '2026-27|bank-statements|5|GST', { fy: '2026-27', category: 'bank-statements' }], // the open folder wins
-  ['April/a.pdf', '2026-27|bank-statements|4|', { fy: '2026-27', category: 'bank-statements', month: '4' }],
-  ['Bank statements/HDFC/a.pdf', '2026-27|bank-statements|4|HDFC', { fy: '2026-27', category: 'bank-statements', month: '4' }],
+const at = (path: string, openFy?: string) => { const p = placeFile(path, openFy, '2026-27'); return `${p.fy}|${p.sub}`; };
+const cases: [string, string, string?][] = [
+  ['a.pdf', '2026-27|'],
+  ['Mehta/FY 2025-26/Bank Statement/April/a.pdf', '2025-26|Bank Statement/April'], // the client's folder above the year is dropped
+  ['2024-2025/GST/Sept/a.pdf', '2024-25|GST/Sept'],
+  ['Scans/HDFC/a.pdf', '2026-27|Scans/HDFC'],                                       // no year: everything kept
+  ['A/B/C/D/E/F/G/a.pdf', '2026-27|A/B/C/D/E/F/G'],                                 // any depth
+  ['2025-27/a.pdf', '2026-27|2025-27'],                                             // not a financial year
+  ['2026-27/Bank/a.pdf', '2026-27|Bank', '2026-27'],                                // names the open year: dropped
+  ['2025-26/Bank/a.pdf', '2026-27|2025-26/Bank', '2026-27'],                        // another year inside an open one: kept as a folder
+  ['Bank/April/a.pdf', '2026-27|Bank/April', '2026-27'],
 ];
-for (const [path, want, fixed] of cases) assert.equal(at(path, fixed), want, path);
+for (const [path, want, openFy] of cases) assert.equal(at(path, openFy), want, path);
 console.log(`${cases.length} passed, 0 failed`);
