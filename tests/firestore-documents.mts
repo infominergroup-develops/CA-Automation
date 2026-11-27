@@ -50,7 +50,13 @@ const cfb = Buffer.concat([Buffer.from('D0CF11E0A1B11AE1', 'hex'), Buffer.alloc(
 const types: [string, Buffer, string | null][] = [
   ['a.pdf', plain, 'application/pdf'], ['a.png', Buffer.from('89504E470D0A1A0A0000000D4948445200000001000000010806000000', 'hex'), 'image/png'],
   ['a.jpeg', Buffer.from('FFD8FFE000104A46494600010100', 'hex'), 'image/jpeg'], ['old.DOC', cfb, 'application/msword'], ['old.xls', cfb, 'application/vnd.ms-excel'],
-  ['setup.msi', cfb, null], ['mail.msg', cfb, null], ['fake.pdf', Buffer.from('MZ\x90\x00'), null],
+  ['setup.msi', cfb, null], ['mail.msg', cfb, 'application/octet-stream'], ['fake.pdf', Buffer.from('MZ\x90\x00'), null],
+  // Any other file is kept, except programs and scripts.
+  ['gstr1.json', Buffer.from('{"gstin":"27ABCDE1234F1Z5"}'), 'text/plain'], ['itr.xml', Buffer.from('<ITR/>'), 'text/plain'],
+  ['tally backup.tbk', Buffer.from([1, 0, 2, 0, 3]), 'application/octet-stream'], ['notes.dat', Buffer.from('plain words'), 'application/octet-stream'],
+  ['data.rar', Buffer.from('526172211A0700CF907300000D', 'hex'), 'application/x-rar-compressed'],
+  ['report.exe', Buffer.from('anything'), null], ['run.bat', Buffer.from('del *'), null], ['page.html', Buffer.from('<script>'), null],
+  ['renamed.dat', Buffer.concat([Buffer.from('MZ'), Buffer.alloc(200)]), null], ['invoice.pdf', Buffer.from('<html><script>x</script>'), null],
 ];
 for (const [name, bytes, want] of types) check(`type of ${name}: ${want ?? 'refused'}`, await detectType(bytes, name) === want, await detectType(bytes, name));
 

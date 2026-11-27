@@ -19,7 +19,6 @@ export interface Category { id: number; name: string }
 const MONTHS = ['April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December', 'January', 'February', 'March'];
 const MONTH_NUM = [4, 5, 6, 7, 8, 9, 10, 11, 12, 1, 2, 3];
 const monthName = (m: number) => MONTHS[MONTH_NUM.indexOf(m)];
-const ACCEPT = '.pdf,.jpg,.jpeg,.png,.webp,.heic,.xlsx,.xls,.docx,.doc,.csv,.zip,image/*';
 const MAX = 25e6;
 // Files the computer adds by itself, never worth uploading.
 const JUNK = /^(\.|~\$|thumbs\.db$|desktop\.ini$)/i;
@@ -33,7 +32,10 @@ function FileIcon({ mime, name }: { mime: string; name?: string }) {
   return <span className={`grid place-items-center size-10 rounded-lg shrink-0 ${color}`}><Icon className="size-5" aria-hidden /></span>;
 }
 
-/** Documents as folders: financial year, then document type, then month. The open folder is kept in the address, so Back works. */
+/**
+ * Documents as folders: financial year, document type, month, then any folders people made. Only folders that hold files
+ * are shown. The open folder is kept in the address, so Back works.
+ */
 export function DocumentsPanel({ companyId, canUpload = true }: { companyId: string; canUpload?: boolean }) {
   const u = useUser();
   const can = useRights(); // what the director lets this person do with files
@@ -45,15 +47,18 @@ export function DocumentsPanel({ companyId, canUpload = true }: { companyId: str
   const [moving, setMoving] = useState(false);
   const [naming, setNaming] = useState(false);
   const [viewing, setViewing] = useState<number | null>(null);
-  const fy = params.get('fy') ?? '', folder = params.get('folder') ?? '', month = params.get('month') ?? '';
+  const fy = params.get('fy') ?? '', folder = params.get('folder') ?? '', month = params.get('month') ?? '', sub = params.get('sub') ?? '';
+  const [makingSub, setMakingSub] = useState(false);
   const [q, setQ] = useState('');
   const [docs, loadErr, reload, loading] = useLoad(() => (can.view ? api<Doc[]>(`/companies/${companyId}/documents`) : Promise.resolve([])), [companyId, can.view]);
-  // Move, accept, ask for re-upload, add folders: the edit right (directors and managers unless changed).
+  // Move, accept, ask for re-upload: the edit right (directors and managers unless changed).
   const managerial = can.edit && u.role !== 'client';
+  // Document-type folders are shared by every client, so only staff add them; anyone who uploads makes folders inside them.
+  const staff = u.role !== 'client';
 
-  const open = (to: { fy?: string; folder?: string; month?: string }) => {
+  const open = (to: { fy?: string; folder?: string; month?: string; sub?: string }) => {
     const next = new URLSearchParams(params);
-    for (const k of ['fy', 'folder', 'month'] as const) { next.delete(k); if (to[k]) next.set(k, to[k]); }
+    for (const k of ['fy', 'folder', 'month', 'sub'] as const) { next.delete(k); if (to[k]) next.set(k, to[k]); }
     setParams(next);
     setQ('');
     setPicked(new Set());
@@ -75,27 +80,40 @@ export function DocumentsPanel({ companyId, canUpload = true }: { companyId: str
   const get = (d: Doc) => attempt(() => download(`/documents/${d.id}/download`, d.original_name));
   const canDelete = (d: Doc) => can.delete && (u.role !== 'client' || (!!d.mine && Date.parse(d.created_at) > Date.now() - 86400e3));
 
-  const here = (docs ?? []).filter((d) => (!fy || d.fy === fy) && (!folder || String(d.category_id) === folder) && (!month || String(d.month ?? '') === month));
+  // Every file inside the open folder, at any depth. Folders people made inside a document type hold files of no month.
+  const here = (docs ?? []).filter((d) => (!fy || d.fy === fy) && (!folder || String(d.category_id) === folder)
+    && (month ? String(d.month ?? '') === month : !sub || !d.month)
+    && (!sub || (d.subfolder ?? '') === sub || (d.subfolder ?? '').startsWith(`${sub}/`)));
+  const rel = (d: Doc) => (sub ? (d.subfolder ?? '').slice(sub.length + 1) : d.subfolder ?? ''); // its folders below this one
   const catName = cats?.find((c) => String(c.id) === folder)?.name ?? folder;
-  const years = [...new Set([...fyOptions(), ...(docs ?? []).map((d) => d.fy)])].sort().reverse();
+  const count = (list: Doc[]) => list.length;
+  const madeFolders = (list: Doc[]) => [...new Set(list.map(rel).filter(Boolean).map((r) => r.split('/')[0]))].sort((a, b) => a.localeCompare(b))
+    .map((name) => ({ key: `sub:${name}`, name, count: count(list.filter((d) => rel(d).split('/')[0] === name)), go: () => open({ fy, folder, month, sub: sub ? `${sub}/${name}` : name }) }));
+  const atTypeRoot = !!folder && !month && !sub;
+  // Only folders that hold files: years, document types and months appear once something is uploaded into them.
   const tiles = !docs || q ? []
-    : !fy ? years.map((y) => ({ name: `FY ${y}`, count: here.filter((d) => d.fy === y).length, go: () => open({ fy: y }) }))
-      : !folder ? (cats ?? []).map((c) => ({ name: c.name, count: here.filter((d) => d.category_id === c.id).length, go: () => open({ fy, folder: String(c.id) }) }))
-        : !month ? MONTHS.map((m, i) => ({ name: m, count: here.filter((d) => d.month === MONTH_NUM[i]).length, go: () => open({ fy, folder, month: String(MONTH_NUM[i]) }) }))
-          : [];
-  // Inside a document type, files that belong to no month are listed under the month folders.
+    : !fy ? [...new Set(here.map((d) => d.fy))].sort().reverse().map((y) => ({ key: y, name: `FY ${y}`, count: count(here.filter((d) => d.fy === y)), go: () => open({ fy: y }) }))
+      : !folder ? (cats ?? []).map((c) => ({ key: String(c.id), name: c.name, count: count(here.filter((d) => d.category_id === c.id)), go: () => open({ fy, folder: String(c.id) }) })).filter((t) => t.count)
+        : atTypeRoot ? [
+          ...MONTHS.map((m, i) => ({ key: m, name: m, count: count(here.filter((d) => d.month === MONTH_NUM[i])), go: () => open({ fy, folder, month: String(MONTH_NUM[i]) }) })).filter((t) => t.count),
+          ...madeFolders(here.filter((d) => !d.month)),
+        ]
+          : madeFolders(here);
+  // Files sitting directly in the open folder; inside a document type, files of no month sit beside the month folders.
   const files = q ? here.filter((d) => `${d.original_name} ${d.subfolder ?? ''}`.toLowerCase().includes(q.toLowerCase()))
-    : month ? here : folder ? here.filter((d) => !d.month) : [];
+    : atTypeRoot ? here.filter((d) => !d.month && !rel(d)) : folder ? here.filter((d) => !rel(d)) : [];
+  const subParts = sub ? sub.split('/') : [];
   const crumbs = [
     { name: 'All years', go: () => open({}) },
     ...(fy ? [{ name: `FY ${fy}`, go: () => open({ fy }) }] : []),
     ...(folder ? [{ name: catName, go: () => open({ fy, folder }) }] : []),
     ...(month ? [{ name: monthName(Number(month)), go: () => open({ fy, folder, month }) }] : []),
+    ...subParts.map((p, i) => ({ name: p, go: () => open({ fy, folder, month, sub: subParts.slice(0, i + 1).join('/') }) })),
   ];
 
   return (
     <div className="space-y-6">
-      {canUpload && <UploadZone key={`${fy}|${folder}|${month}`} companyId={companyId} cats={cats ?? []} at={{ fy, folder, month }} onDone={reload} onNewFolder={managerial ? reloadCats : undefined} />}
+      {canUpload && <UploadZone key={`${fy}|${folder}|${month}|${sub}`} companyId={companyId} cats={cats ?? []} at={{ fy, folder, month, sub }} onDone={reload} onNewFolder={staff ? reloadCats : undefined} />}
 
       {!can.view ? (
         <Card title="Documents">
@@ -111,7 +129,7 @@ export function DocumentsPanel({ companyId, canUpload = true }: { companyId: str
         }>
         <nav aria-label="Folder" className="flex flex-wrap items-center gap-1 px-5 py-3 border-b border-line text-sm">
           {crumbs.map((c, i) => (
-            <span key={c.name} className="flex items-center gap-1">
+            <span key={`${i}:${c.name}`} className="flex items-center gap-1">
               {i > 0 && <ChevronRight className="size-4 text-slate-300" aria-hidden />}
               {i < crumbs.length - 1
                 ? <button type="button" onClick={c.go} className="font-medium text-brand-700 hover:underline">{c.name}</button>
@@ -121,10 +139,10 @@ export function DocumentsPanel({ companyId, canUpload = true }: { companyId: str
         </nav>
         {loadErr ? <div className="p-5"><ErrorText error={loadErr} /></div> : loading && !docs ? <div className="p-5"><LoadingRows /></div> : (
           <>
-            {!!tiles.length && (
+            {(!!tiles.length || (!q && ((staff && fy && !folder) || (canUpload && folder)))) && (
               <ul className="grid gap-3 p-5 sm:grid-cols-2 lg:grid-cols-3">
                 {tiles.map((t) => (
-                  <li key={t.name}>
+                  <li key={t.key}>
                     <button type="button" onClick={t.go} className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left ring-1 ring-ink/10 hover:ring-brand-500 hover:bg-brand-50/40 transition-colors">
                       {t.count ? <FolderOpen className="size-5 shrink-0 text-brand-700" aria-hidden /> : <Folder className="size-5 shrink-0 text-slate-300" aria-hidden />}
                       <span className="min-w-0 flex-1">
@@ -134,9 +152,9 @@ export function DocumentsPanel({ companyId, canUpload = true }: { companyId: str
                     </button>
                   </li>
                 ))}
-                {managerial && fy && !folder && (
+                {!q && ((staff && fy && !folder) || (canUpload && folder && subParts.length < 5)) && (
                   <li>
-                    <button type="button" onClick={() => setNaming(true)} className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left border-2 border-dashed border-line text-brand-700 hover:border-brand-500 hover:bg-brand-50/40 transition-colors">
+                    <button type="button" onClick={() => (folder ? setMakingSub(true) : setNaming(true))} className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left border-2 border-dashed border-line text-brand-700 hover:border-brand-500 hover:bg-brand-50/40 transition-colors">
                       <FolderPlus className="size-5 shrink-0" aria-hidden /><span className="text-sm font-semibold">New folder</span>
                     </button>
                   </li>
@@ -155,8 +173,8 @@ export function DocumentsPanel({ companyId, canUpload = true }: { companyId: str
             )}
             {!!files.length && !!tiles.length && <p className="px-5 pb-2 text-[13px] font-semibold text-slate-500">Not for a particular month</p>}
             {!files.length && !tiles.length && (
-              <EmptyState icon={FolderOpen} title={q ? 'No matching documents' : 'This folder is empty'}>
-                {canUpload && !q ? 'Upload files or a whole folder above. They are encrypted as soon as they arrive.' : 'Try a different search.'}
+              <EmptyState icon={FolderOpen} title={q ? 'No matching documents' : !fy ? 'No files yet' : 'This folder is empty'}>
+                {q ? 'Try a different search.' : canUpload ? `Upload files or a whole folder above. They are encrypted as soon as they arrive.${fy ? ' An empty folder is not kept: it stays once a file is in it.' : ''}` : ''}
               </EmptyState>
             )}
             {!!files.length && (
@@ -205,6 +223,8 @@ export function DocumentsPanel({ companyId, canUpload = true }: { companyId: str
         <FileViewer docs={files} index={viewing} onIndex={setViewing} onClose={() => setViewing(null)} onDownload={can.download ? get : undefined} />
       )}
       {naming && <NewFolder onClose={() => setNaming(false)} onDone={(c) => { setNaming(false); reloadCats(); open({ fy, folder: String(c.id) }); }} />}
+      {makingSub && <NewSubfolder taken={tiles.map((t) => t.name)} onClose={() => setMakingSub(false)}
+        onDone={(name) => { setMakingSub(false); open({ fy, folder, month, sub: sub ? `${sub}/${name}` : name }); }} />}
       {moving && cats && (
         <MoveFiles docs={(docs ?? []).filter((d) => picked.has(d.id))} cats={cats} at={{ fy, folder, month }}
           onClose={() => setMoving(false)} onDone={() => { setMoving(false); setPicked(new Set()); reload(); }} />
@@ -213,7 +233,24 @@ export function DocumentsPanel({ companyId, canUpload = true }: { companyId: str
   );
 }
 
-/** A folder for every client, such as Bookkeeping. Directors and managers only. */
+/** A folder inside the open one, made by whoever is uploading. It exists once a file is uploaded into it. */
+function NewSubfolder({ taken, onClose, onDone }: { taken: string[]; onClose: () => void; onDone: (name: string) => void }) {
+  const [name, setName] = useState('');
+  // Same rules as the server's folder names: no slashes or control characters, no leading dots.
+  const clean = name.replace(/[\u0000-\u001f\u007f/\\]/g, ' ').replace(/^\.+/, '').trim();
+  const clash = taken.some((t) => t.toLowerCase() === clean.toLowerCase());
+  return (
+    <Modal title="New folder" description="Made inside the folder you have open. Upload files into it; an empty folder is not kept." onClose={onClose}
+      footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button icon={FolderPlus} onClick={() => onDone(clean)} disabled={!clean}>{clash ? 'Open folder' : 'Make folder'}</Button></>}>
+      <Field label="Folder name" hint={clash ? 'A folder with this name is already here; it will open.' : undefined}>
+        <Input autoFocus value={name} maxLength={40} onChange={(e) => setName(e.target.value)} placeholder="e.g. HDFC current account"
+          onKeyDown={(e) => { if (e.key === 'Enter' && clean) onDone(clean); }} />
+      </Field>
+    </Modal>
+  );
+}
+
+/** A document-type folder for every client, such as Bookkeeping. Any staff member; it shows for a client once it holds their files. */
 function NewFolder({ name: initial = '', onClose, onDone }: { name?: string; onClose: () => void; onDone: (c: Category) => void }) {
   const toast = useToast();
   const [name, setName] = useState(initial);
@@ -224,7 +261,7 @@ function NewFolder({ name: initial = '', onClose, onDone }: { name?: string; onC
     try { const c = await api<Category>('/categories', { body: { name: name.trim() } }); toast(`Folder ${c.name} added for every client.`); onDone(c); } catch (e) { setErr(e); } finally { setBusy(false); }
   };
   return (
-    <Modal title="New folder" description="Added to every financial year of every client, like Bank statements." onClose={onClose}
+    <Modal title="New folder" description="A document type for every client and year, like Bank statements. It shows for a client once it holds their files." onClose={onClose}
       footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button busy={busy} icon={FolderPlus} onClick={save} disabled={name.trim().length < 2}>Add folder</Button></>}>
       <div className="space-y-4">
         <Field label="Folder name"><Input autoFocus value={name} maxLength={60} onChange={(e) => setName(e.target.value)} placeholder="e.g. Bookkeeping" /></Field>
@@ -301,9 +338,12 @@ async function readDropped(data: DataTransfer): Promise<Picked[]> {
   return out;
 }
 
-function UploadZone({ companyId, cats, at, onDone, onNewFolder }: { companyId: string; cats: Category[]; at: { fy: string; folder: string; month: string }; onDone: () => void; onNewFolder?: () => void }) {
+/**
+ * Never holds a file back for its folder: with no folder chosen it goes to Others, keeping its own folder names. Staff
+ * uploading a folder of their own layout (year / type / month) get its unknown document types added as new folders.
+ */
+function UploadZone({ companyId, cats, at, onDone, onNewFolder }: { companyId: string; cats: Category[]; at: { fy: string; folder: string; month: string; sub: string }; onDone: () => void; onNewFolder?: () => void }) {
   const toast = useToast();
-  const [naming, setNaming] = useState<string | null>(null);
   const [category, setCategory] = useState(at.folder);
   const [fy, setFy] = useState(at.fy || currentFy());
   const [month, setMonth] = useState(at.month);
@@ -317,18 +357,30 @@ function UploadZone({ companyId, cats, at, onDone, onNewFolder }: { companyId: s
   const fromInput = (input: HTMLInputElement) => { add([...(input.files ?? [])].map((file) => ({ file, path: file.webkitRelativePath || file.name }))); input.value = ''; };
   const onDrop = (e: DragEvent) => { e.preventDefault(); setDrag(false); setErr(undefined); readDropped(e.dataTransfer).then(add).catch(setErr); };
 
-  // The open folder is fixed; what is not fixed comes from the uploaded folder's own names, else from the boxes above.
-  const fixed: Partial<Place> = { ...(at.fy && { fy: at.fy }), ...(at.folder && { category: at.folder }), ...(at.month && { month: at.month }) };
-  const planned = files.map((f) => ({ ...f, place: placeFile(f.path, fixed, { category, fy, month }, cats) }));
+  // The open folder is fixed (inside a made folder, so is "no month"); the rest comes from the uploaded folder's names, else the boxes above.
+  const fixed: Partial<Place> = { ...(at.fy && { fy: at.fy }), ...(at.folder && { category: at.folder }), ...((at.month || at.sub) && { month: at.month }) };
+  const others = String(cats.find((c) => c.name === 'Others')?.id ?? '');
+  const plan = (list: Category[]) => files.map((f) => {
+    const p = placeFile(f.path, fixed, { category: category || String(list.find((c) => c.name === 'Others')?.id ?? ''), fy, month }, list);
+    return { ...f, place: { ...p, sub: [at.sub, p.sub].filter(Boolean).join('/') } };
+  });
+  const planned = plan(cats);
   const ready = planned.filter((f) => f.place.category && f.file.size <= MAX);
-  const unfiled = planned.filter((f) => !f.place.category).length;
-  // Folder names in the upload that look like document types the portal does not have yet.
-  const unknown = [...new Set(planned.filter((f) => !f.place.category && f.place.newFolder).map((f) => f.place.newFolder!))];
+  // Folder names in the upload that look like document types the portal does not have yet; staff get them added.
+  const unknown = !category && !at.folder && onNewFolder ? [...new Set(planned.filter((f) => f.place.newFolder).map((f) => f.place.newFolder!))] : [];
 
   const submit = async () => {
     setErr(undefined);
     let done = 0, dups = 0;
     const failed = new Map<File, string>();
+    let ready = planned.filter((f) => f.place.category && f.file.size <= MAX);
+    if (unknown.length) {
+      // Added first (one that exists already is fine), then every file is placed again with them.
+      for (const name of unknown) await api('/categories', { body: { name } }).catch(() => {});
+      const fresh = await api<Category[]>('/categories').catch(() => cats);
+      ready = plan(fresh).filter((f) => f.place.category && f.file.size <= MAX);
+      onNewFolder?.();
+    }
     const queue = [...ready];
     setProgress({ done, total: queue.length });
     // One file per request, so one bad file cannot sink the rest, and a large folder never sits in the server's memory.
@@ -355,23 +407,27 @@ function UploadZone({ companyId, cats, at, onDone, onNewFolder }: { companyId: s
   };
 
   const busy = !!progress;
-  const label = (p: Place) => [`FY ${p.fy}`, cats.find((c) => String(c.id) === p.category)?.name ?? 'choose a folder', p.month && monthName(Number(p.month)), p.sub].filter(Boolean).join(' / ');
+  const label = (p: Place) => {
+    const fresh = unknown.includes(p.newFolder ?? '') ? p.newFolder : undefined; // a document type about to be added
+    const sub = fresh && p.sub.startsWith(fresh) ? p.sub.slice(fresh.length + 1) : p.sub;
+    return [`FY ${p.fy}`, fresh ? `${fresh} (new folder)` : cats.find((c) => String(c.id) === p.category)?.name ?? 'Others', p.month && monthName(Number(p.month)), sub].filter(Boolean).join(' / ');
+  };
   const pickerClass = 'font-semibold text-brand-700 cursor-pointer hover:underline focus-within:ring-2 focus-within:ring-brand-500 rounded';
 
   return (
-    <Card title="Upload documents" description="Files are encrypted the moment they reach us. PDF, images, Excel, Word, CSV or ZIP, up to 25 MB each.">
+    <Card title="Upload documents" description={`Files are encrypted the moment they reach us. Any file up to 25 MB, except programs and scripts.${at.sub ? ` Going into ${at.sub}.` : ''}`}>
       <div className="grid sm:grid-cols-3 gap-4">
         <Field label="Financial year">
           <Select value={fy} disabled={!!at.fy || busy} onChange={(e) => setFy(e.target.value)}>{[...new Set([...fyOptions(), fy])].map((f) => <option key={f} value={f}>FY {f}</option>)}</Select>
         </Field>
         <Field label="Folder">
           <Select value={category} disabled={!!at.folder || busy} onChange={(e) => setCategory(e.target.value)}>
-            <option value="">Choose a folder</option>
+            <option value="">{others ? 'Others, or by the uploaded folder’s names' : 'By the uploaded folder’s names'}</option>
             {cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </Select>
         </Field>
         <Field label="Month" optional>
-          <Select value={month} disabled={!!at.month || busy} onChange={(e) => setMonth(e.target.value)}>
+          <Select value={month} disabled={!!at.month || !!at.sub || busy} onChange={(e) => setMonth(e.target.value)}>
             <option value="">Not for a particular month</option>
             {MONTHS.map((m, i) => <option key={m} value={MONTH_NUM[i]}>{m}</option>)}
           </Select>
@@ -382,7 +438,7 @@ function UploadZone({ companyId, cats, at, onDone, onNewFolder }: { companyId: s
         className={`mt-4 flex flex-col items-center justify-center text-center gap-2 px-4 py-8 rounded-2xl border-2 border-dashed transition-colors duration-150 ${drag ? 'border-brand-500 bg-brand-50' : 'border-line bg-slate-50/50 hover:border-slate-300'}`}>
         <span className="grid place-items-center size-12 rounded-full bg-white shadow-card text-brand-700"><UploadCloud className="size-6" aria-hidden /></span>
         <span className="text-sm text-ink">
-          <label className={pickerClass}>Choose files<input type="file" multiple accept={ACCEPT} disabled={busy} className="sr-only" onChange={(e) => fromInput(e.target)} /></label>
+          <label className={pickerClass}>Choose files<input type="file" multiple disabled={busy} className="sr-only" onChange={(e) => fromInput(e.target)} /></label>
           {', '}
           <label className={pickerClass}><FolderUp className="inline size-4 mr-1 -mt-0.5" aria-hidden />choose a folder<input type="file" multiple disabled={busy} className="sr-only" {...{ webkitdirectory: '' }} onChange={(e) => fromInput(e.target)} /></label>
           {' or drag them here'}
@@ -393,7 +449,7 @@ function UploadZone({ companyId, cats, at, onDone, onNewFolder }: { companyId: s
       {!!planned.length && (
         <ul className="mt-4 space-y-2 max-h-96 overflow-y-auto">
           {planned.map((f) => {
-            const problem = f.error ?? (f.file.size > MAX ? 'Larger than 25 MB' : f.place.category ? '' : 'Choose a folder above');
+            const problem = f.error ?? (f.file.size > MAX ? 'Larger than 25 MB' : '');
             return (
               <li key={f.path + f.file.size} className={`flex items-center gap-3 rounded-lg border px-3 py-2 ${problem ? 'border-red-200 bg-red-50' : 'border-line'}`}>
                 <FileIcon mime={f.file.type} name={f.file.name} />
@@ -409,20 +465,14 @@ function UploadZone({ companyId, cats, at, onDone, onNewFolder }: { companyId: s
       )}
 
       {!busy && !!unknown.length && (
-        <div className="mt-4 rounded-xl bg-amber-50 ring-1 ring-amber-200 px-4 py-3 text-sm text-amber-900">
-          <p>{onNewFolder ? 'These folders are not in the portal yet. Add them to file everything in them, or choose a folder above:' : 'These folders are not in the portal yet. Ask a manager to add them, or choose a folder above:'}</p>
-          <div className="flex flex-wrap gap-2 mt-2">
-            {unknown.map((n) => onNewFolder
-              ? <Button key={n} size="sm" variant="secondary" icon={FolderPlus} onClick={() => setNaming(n)}>Add folder “{n}”</Button>
-              : <span key={n} className="rounded-md bg-white px-2 py-1 ring-1 ring-amber-200">{n}</span>)}
-          </div>
-        </div>
+        <p className="mt-4 rounded-xl bg-brand-50 ring-1 ring-brand-200 px-4 py-3 text-sm text-ink">
+          New folders will be added as you upload: {unknown.map((n) => <b key={n} className="font-semibold">{n} </b>)}
+        </p>
       )}
-      {naming !== null && <NewFolder name={naming} onClose={() => setNaming(null)} onDone={() => { setNaming(null); onNewFolder?.(); }} />}
       {err ? <div className="mt-4"><ErrorText error={err} /></div> : null}
       <div className="flex flex-wrap items-center justify-between gap-3 mt-4">
         <span className="text-xs text-slate-500" aria-live="polite">
-          {progress ? `Uploading ${progress.done} of ${progress.total}. Keep this page open.` : unfiled ? `Choose a folder for ${unfiled} file${unfiled > 1 ? 's' : ''}.` : ready.length ? `${ready.length} file${ready.length > 1 ? 's' : ''} ready` : ''}
+          {progress ? `Uploading ${progress.done} of ${progress.total}. Keep this page open.` : ready.length ? `${ready.length} file${ready.length > 1 ? 's' : ''} ready` : ''}
         </span>
         <Button icon={UploadCloud} onClick={submit} busy={busy} disabled={!ready.length}>
           Upload{ready.length ? ` ${ready.length} file${ready.length > 1 ? 's' : ''}` : ''}

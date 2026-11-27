@@ -149,13 +149,20 @@ try {
   await dir.post(`/api/tasks/${task.data.id}/cancel`, { comment: 'Not needed' });
   check('when the task ends, so does access to that upload', (await emp.get(`/api/documents/${onTask.data[0].id}/download`)).status === 404);
 
-  // New folders and moving files: directors and managers only
-  check('employee cannot add a folder', (await emp.post('/api/categories', { name: 'Bookkeeping' })).status === 403);
+  // Folders: any staff member adds a document type for every client; clients make folders only inside them.
+  check('employee adds a document-type folder', (await emp.post('/api/categories', { name: 'Working papers' })).status === 201);
+  const cl = browser(); await cl.login('client', '9876543210', 'newclient123');
+  check('a client cannot add one for every client', (await cl.post('/api/categories', { name: 'Ravi private' })).status === 403);
+  const inMade = await cl.post(`/api/companies/${companyId}/documents`, (() => { const f = new FormData(); f.append('category_id', 'bank-statements'); f.append('fy', '2026-27');
+    f.append('subfolder', 'HDFC/Current account'); f.append('files', new Blob([Buffer.from('{"gstin":"x"}')]), 'gstr1.json'); return f; })());
+  check('a client uploads any file into a folder they made', inMade.status === 201 && (await getDocumentMeta(inMade.data[0].id))?.subfolder === 'HDFC/Current account');
+  check('...but never a program', (await cl.post(`/api/companies/${companyId}/documents`, (() => { const f = new FormData(); f.append('category_id', 'others'); f.append('fy', '2026-27');
+    f.append('files', new Blob([Buffer.from('MZ\x90\x00')]), 'setup.exe'); return f; })())).status === 415);
   const nf = await mgr.post('/api/categories', { name: 'Bookkeeping' });
   check('manager adds a folder', nf.status === 201 && nf.data.id === 'bookkeeping', nf.data);
   check('same folder twice is refused', (await dir.post('/api/categories', { name: 'bookkeeping!' })).status === 409);
   const cats2 = (await emp.get('/api/categories')).data as { id: string; name: string }[];
-  check('new folder sits before Others', cats2.at(-1)!.name === 'Others' && cats2.at(-2)!.name === 'Bookkeeping', cats2.map((c) => c.name));
+  check('new folders sit before Others', cats2.at(-1)!.name === 'Others' && cats2.slice(-3, -1).map((c) => c.name).join() === 'Bookkeeping,Working papers', cats2.map((c) => c.name));
   const f1 = await emp.post(G, file('ledger.pdf', 'others', 'ledger body'));
   const before = (await getDocumentMeta(f1.data[0].id))!.blob_key;
   check('employee cannot move a file', (await emp.post(`/api/documents/${f1.data[0].id}/move`, { fy: '2026-27', category_id: 'bookkeeping', month: 4 })).status === 403);

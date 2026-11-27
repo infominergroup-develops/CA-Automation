@@ -73,7 +73,7 @@ documentsRouter.post('/companies/:companyId/documents', requireAuth, upload.arra
   const prepared = await Promise.all(files.map(async (f) => {
     const name = cleanName(f.originalname);
     const mime = await detectType(f.buffer, name);
-    if (!mime) throw new HttpError(415, `"${name}" is not an allowed file type (PDF, image, Excel, Word, CSV, ZIP).`);
+    if (!mime) throw new HttpError(415, `"${name}" cannot be uploaded: programs and scripts are not allowed, and a file must really be the type its name says.`);
     return { f, name, mime, hash: sha256(f.buffer) };
   }));
 

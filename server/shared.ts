@@ -86,16 +86,29 @@ const ALLOWED: Record<string, string> = {
   zip: 'application/zip',
 };
 
+// Programs and scripts could run on a staff computer, so they are refused whatever they are called inside.
+const BLOCKED_NAME = /\.(exe|dll|com|scr|pif|cpl|msi|msp|msc|bat|cmd|ps1|psm1|vbs|vbe|js|jse|mjs|wsf|wsh|hta|jar|apk|app|dmg|iso|sh|bash|lnk|reg|gadget|html?|xhtml|shtml|mht|mhtml|svg)$/i;
+const BLOCKED_BYTES = new Set(['exe', 'elf', 'macho', 'msi', 'apk', 'jar', 'class', 'swf', 'dex', 'dmg', 'iso', 'wasm']);
+// A file named as one of the types we show must really be one (a "PDF" that is not a PDF is refused).
+const CHECKED_NAME = /\.(pdf|jpe?g|png|webp|heic|xlsx|docx|zip)$/i;
+
+/**
+ * Any file may be uploaded except programs and scripts. Known types are named from the bytes; text files by their
+ * name; anything else is kept as a plain download (application/octet-stream), never shown in the browser.
+ */
 export async function detectType(buf: Buffer, name: string): Promise<string | null> {
+  if (BLOCKED_NAME.test(name)) return null;
   const t = await fileTypeFromBuffer(buf);
+  if (t && BLOCKED_BYTES.has(t.ext)) return null;
   if (t && ALLOWED[t.ext]) return ALLOWED[t.ext];
-  // Old Word and Excel share one container with other programs' files (and Windows installers), so the name decides.
-  if (t?.ext === 'cfb') return /\.doc$/i.test(name) ? 'application/msword' : /\.xls$/i.test(name) ? 'application/vnd.ms-excel' : null;
-  // CSV and plain text have no signature: accept only by extension, and only if the bytes are text.
-  if (!t && /\.(csv|txt)$/i.test(name) && !buf.subarray(0, 8192).includes(0)) {
-    return name.toLowerCase().endsWith('.csv') ? 'text/csv' : 'text/plain';
+  // Old Word and Excel share one container with other programs' files (Outlook mail, installers), so the name decides.
+  if (t?.ext === 'cfb') return /\.doc$/i.test(name) ? 'application/msword' : /\.xls$/i.test(name) ? 'application/vnd.ms-excel' : 'application/octet-stream';
+  if (CHECKED_NAME.test(name)) return null;
+  if (!t && !buf.subarray(0, 8192).includes(0)) {
+    // CSV, text, GST JSON, ITR XML: shown as text in the viewer, never run.
+    return /\.csv$/i.test(name) ? 'text/csv' : /\.(txt|json|xml|log)$/i.test(name) ? 'text/plain' : 'application/octet-stream';
   }
-  return null;
+  return t && !/html|xml|svg|javascript/.test(t.mime) ? t.mime : 'application/octet-stream';
 }
 
 export function cleanName(name: string) {

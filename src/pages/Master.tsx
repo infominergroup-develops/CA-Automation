@@ -383,7 +383,7 @@ function RolesAndRights({ onChange }: { onChange: () => void }) {
     <div className="space-y-6">
       <ErrorText error={err} />
       <Card title="Staff" padded={false}
-        description="Change someone's role, and tick what they may do with client files. View = open files in the portal; Edit = move files, accept them or ask for re-upload, add folders; Download = save a copy; Delete = remove a file. Directors always have every right.">
+        description="Change someone's role, and tick what they may do with client files. View = open files in the portal; Edit = move files, accept them or ask for re-upload; Download = save a copy; Delete = remove a file. Everyone can upload and make folders. Directors always have every right.">
         <Table head={['Name', 'Role', 'View', 'Edit', 'Download', 'Delete', '']}>
           {staff.map((p) => (
             <tr key={p.id}>
