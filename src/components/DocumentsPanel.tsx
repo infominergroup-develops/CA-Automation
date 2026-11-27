@@ -82,15 +82,15 @@ export function DocumentsPanel({ companyId, canUpload = true }: { companyId: str
   };
   const get = (d: Doc) => attempt(() => download(`/documents/${d.id}/download`, d.original_name));
   // Deleting a folder deletes every file in it, at any depth (the "delete folders" right in Masters).
-  const removeFolder = async (t: { name: string; count: number; to: Place2 }) => {
+  const removeFolder = async (t: { name: string; count: number; to: Place2 }, after?: () => void) => {
     const r = await confirm({ title: `Delete the folder “${t.name}”?`, danger: true, confirmLabel: `Delete ${t.count} file${t.count > 1 ? 's' : ''}`,
       body: <>All <b>{t.count} file{t.count > 1 ? 's' : ''}</b> in it, including its inner folders, will be removed from the portal. The deletion is recorded in the audit trail.</> });
-    if (r) attempt(() => api(`/companies/${companyId}/folders/delete`, { body: { fy: t.to.fy, category_id: t.to.folder || undefined, month: t.to.month ? Number(t.to.month) : undefined, sub: t.to.sub || undefined } }), `Folder ${t.name} deleted`);
+    if (r) attempt(() => api(`/companies/${companyId}/folders/delete`, { body: { fy: t.to.fy, category_id: t.to.folder || undefined, month: t.to.month ? Number(t.to.month) : undefined, sub: t.to.sub || undefined } }).then(after), `Folder ${t.name} deleted`);
   };
-  const removePicked = async () => {
-    const list = (docs ?? []).filter((d) => picked.has(d.id));
-    const r = await confirm({ title: `Delete ${list.length} file${list.length > 1 ? 's' : ''}?`, danger: true, confirmLabel: 'Delete',
-      body: 'They will be removed from the portal. The deletion is recorded in the audit trail.' });
+  const removePicked = (list = (docs ?? []).filter((d) => picked.has(d.id)), title?: string) => removeFiles(list, title);
+  const removeFiles = async (list: Doc[], title = `Delete ${list.length} file${list.length > 1 ? 's' : ''}?`) => {
+    const r = await confirm({ title, danger: true, confirmLabel: `Delete ${list.length} file${list.length > 1 ? 's' : ''}`,
+      body: 'They will be removed from the portal. Folders inside this one are not touched. The deletion is recorded in the audit trail.' });
     if (!r) return;
     let failed = 0;
     for (const d of list) await api(`/documents/${d.id}`, { method: 'DELETE' }).catch(() => failed++);
@@ -148,16 +148,29 @@ export function DocumentsPanel({ companyId, canUpload = true }: { companyId: str
             <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder={fy ? 'Search this folder' : 'Search all files'} aria-label="Search files" className="pl-9 w-52! h-9!" />
           </div>
         }>
-        <nav aria-label="Folder" className="flex flex-wrap items-center gap-1 px-5 py-3 border-b border-line text-sm">
-          {crumbs.map((c, i) => (
-            <span key={`${i}:${c.name}`} className="flex items-center gap-1">
-              {i > 0 && <ChevronRight className="size-4 text-slate-300" aria-hidden />}
-              {i < crumbs.length - 1
-                ? <button type="button" onClick={c.go} className="font-medium text-brand-700 hover:underline">{c.name}</button>
-                : <span className="font-semibold text-ink" aria-current="page">{c.name}</span>}
-            </span>
-          ))}
-        </nav>
+        <div className="flex flex-wrap items-center gap-2 px-5 py-3 border-b border-line">
+          <nav aria-label="Folder" className="flex flex-wrap items-center gap-1 text-sm flex-1 min-w-0">
+            {crumbs.map((c, i) => (
+              <span key={`${i}:${c.name}`} className="flex items-center gap-1">
+                {i > 0 && <ChevronRight className="size-4 text-slate-300" aria-hidden />}
+                {i < crumbs.length - 1
+                  ? <button type="button" onClick={c.go} className="font-medium text-brand-700 hover:underline">{c.name}</button>
+                  : <span className="font-semibold text-ink" aria-current="page">{c.name}</span>}
+              </span>
+            ))}
+          </nav>
+          {/* The open folder's own delete buttons: every file directly here, or the whole folder with its inner folders. */}
+          {staff && can.delete && !q && files.length > 0 && (
+            <Button size="sm" variant="secondary" icon={Trash2} onClick={() => removeFiles(files, `Delete all ${files.length} file${files.length > 1 ? 's' : ''} in “${crumbs.at(-1)!.name}”?`)}>
+              Delete all files here
+            </Button>
+          )}
+          {staff && can.deleteFolder && !q && fy && here.length > 0 && (
+            <Button size="sm" variant="danger" icon={Trash2} onClick={() => removeFolder({ name: crumbs.at(-1)!.name, count: here.length, to: { fy, folder, month, sub } }, () => crumbs.at(-2)?.go())}>
+              Delete this folder
+            </Button>
+          )}
+        </div>
         {loadErr ? <div className="p-5"><ErrorText error={loadErr} /></div> : loading && !docs ? <div className="p-5"><LoadingRows /></div> : (
           <>
             {(!!tiles.length || (!q && ((staff && fy && !folder) || (canUpload && folder)))) && (
@@ -193,7 +206,7 @@ export function DocumentsPanel({ companyId, canUpload = true }: { companyId: str
                   Select all
                 </label>
                 {!!picked.size && canMove && <Button size="sm" variant="secondary" icon={FolderInput} onClick={() => setMoving(true)}>Move {picked.size} file{picked.size > 1 ? 's' : ''}</Button>}
-                {!!picked.size && can.delete && <Button size="sm" variant="danger" icon={Trash2} onClick={removePicked}>Delete {picked.size} file{picked.size > 1 ? 's' : ''}</Button>}
+                {!!picked.size && can.delete && <Button size="sm" variant="danger" icon={Trash2} onClick={() => removePicked()}>Delete {picked.size} file{picked.size > 1 ? 's' : ''}</Button>}
               </div>
             )}
             {!!files.length && !!tiles.length && <p className="px-5 pb-2 text-[13px] font-semibold text-slate-500">Not for a particular month</p>}
