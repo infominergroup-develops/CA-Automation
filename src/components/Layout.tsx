@@ -2,11 +2,12 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 're
 import { gsap } from 'gsap';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
-  LayoutDashboard, Building2, ListChecks, ClipboardCheck, Timer, Users, History, ShieldCheck, LogOut, Square, Menu, X, FileText, Lock, BarChart3, RefreshCcw, Tags,
+  LayoutDashboard, Building2, ListChecks, ClipboardCheck, Timer, Users, History, ShieldCheck, LogOut, KeyRound, Square, Menu, X, FileText, Lock, BarChart3, RefreshCcw, Tags,
   type LucideIcon,
 } from 'lucide-react';
 import { api } from '../api';
-import { useAuth, useHasClientMaster, useHasTally, type Role } from '../auth';
+import { useAuth, useClientPassword, useHasClientMaster, useHasTally, type Role } from '../auth';
+import { ChangePassword } from './ChangePassword';
 import { InfominerLogo } from './InfominerLogo';
 import { Avatar } from './ui';
 import { prefersReducedMotion } from '../motion';
@@ -90,6 +91,8 @@ export function Layout({ children }: { children: ReactNode }) {
   const reviewCount = useReviewCount(u.role === 'director' || u.role === 'manager');
   const hasTally = useHasTally();
   const hasMaster = useHasClientMaster();
+  const clientPassword = useClientPassword(); // clients have a password only while one-time codes are off
+  const [changingPw, setChangingPw] = useState(false);
 
   useEffect(() => setOpen(false), [pathname]);
 
@@ -157,6 +160,9 @@ export function Layout({ children }: { children: ReactNode }) {
             <div className="text-sm font-semibold text-ink truncate">{u.name}</div>
             <div className="text-xs text-slate-500 capitalize">{u.role}</div>
           </div>
+          {(u.role !== 'client' || clientPassword) && (
+            <button onClick={() => setChangingPw(true)} className="grid place-items-center size-9 rounded-full text-slate-500 hover:bg-white hover:text-ink hover:shadow-card transition-all duration-300" aria-label="Change my password" title="Change my password"><KeyRound className="size-[18px]" /></button>
+          )}
           <button onClick={signOut} className="grid place-items-center size-9 rounded-full text-slate-500 hover:bg-white hover:text-ink hover:shadow-card transition-all duration-300" aria-label="Sign out" title="Sign out"><LogOut className="size-[18px]" /></button>
         </div>
       </div>
@@ -207,6 +213,7 @@ export function Layout({ children }: { children: ReactNode }) {
       <footer className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-8 text-xs text-slate-500">
         Confidential client information. Every view and download is recorded. · <NavLink to="/privacy" className="underline underline-offset-2 hover:text-ink">Privacy notice</NavLink>
       </footer>
+      {changingPw && <ChangePassword onClose={() => setChangingPw(false)} />}
     </div>
   );
 }

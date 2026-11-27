@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import { z } from 'zod';
 import { config } from '../config.ts';
 import { zEmail, zGstin, zId, zMobile, zPan, zText } from '../shared.ts';
@@ -77,9 +78,13 @@ adminRouter.patch('/users/:id/status', requireRole('director'), h(async (req, re
   res.json({ ok: true });
 }));
 
-adminRouter.post('/me/password', requireAuth, h(async (req, res) => {
+// Each try checks the current password, so it is limited like sign-in.
+const passwordLimiter = rateLimit({ windowMs: 15 * 60e3, limit: 10, standardHeaders: 'draft-8', legacyHeaders: false });
+
+/** Anyone signed in changes their own password; clients too while they sign in with one (one-time codes off). */
+adminRouter.post('/me/password', requireAuth, passwordLimiter, h(async (req, res) => {
   const b = parse(z.object({ current: z.string().max(200), next: z.string().max(200) }), req.body);
-  if (req.user!.role === 'client') throw new HttpError(400, 'Clients sign in with a one-time code.');
+  if (req.user!.role === 'client' && config.otpProvider !== 'off') throw new HttpError(400, 'Clients sign in with a one-time code.');
   if (!(await checkPassword(req.user, b.current))) throw new HttpError(400, 'Current password is incorrect.');
   const problem = passwordProblem(b.next);
   if (problem) throw new HttpError(400, problem);
@@ -146,22 +151,33 @@ const companyDoc = (id: string, groupId: string, b: z.infer<typeof companyFields
 });
 
 adminRouter.post('/clients', requireRole('director', 'manager', 'employee'), h(async (req, res) => {
-  const b = parse(z.object({ group_name: zText(200).min(2), company: companyFields, contact: contactFields }), req.body);
+  // No contact = a client whose files the firm keeps without giving them a portal login (one can be added later).
+  const b = parse(z.object({
+    group_name: zText(200).min(2), company: companyFields, contact: contactFields.optional(),
+    work_types: z.array(z.string().max(80)).max(50).optional().transform((a) => [...new Set(a ?? [])]),
+  }), req.body);
   const managerId = b.company.manager_id ?? (req.user!.role === 'manager' ? req.user!.id : undefined);
   // Without one, no manager could see a client an employee added.
   if (req.user!.role === 'employee' && !managerId) throw new HttpError(400, 'Choose a relationship manager.');
   await checkManager(managerId);
   await checkFolderName(b.company.legal_name);
-  const password = clientPassword(b.contact.password);
+  const contact = b.contact;
+  const password = contact ? clientPassword(contact.password) : undefined;
+  if (b.work_types.length) {
+    const known = new Set((await query<{ id: string }>(C.workTypes)).map((w) => w.id));
+    if (!b.work_types.every((w) => known.has(w))) throw new HttpError(400, 'Unknown work type.');
+  }
   const groupId = newId(), companyId = newId();
   // The login first: it is the step that can fail on a duplicate mobile/email, before anything else is written.
-  const userId = await createClientUser({ name: b.contact.name, mobile: b.contact.mobile, email: b.contact.email, clientGroupId: groupId, createdBy: req.user!.id, password })
-    .catch((e) => duplicate(e, 'A user with this mobile or email already exists.'));
+  const userId = contact
+    ? await createClientUser({ name: contact.name, mobile: contact.mobile, email: contact.email, clientGroupId: groupId, createdBy: req.user!.id, password })
+      .catch((e) => duplicate(e, 'A user with this mobile or email already exists.'))
+    : null;
   const batch = db.batch();
   batch.set(db.collection(C.clientGroups).doc(groupId), { id: groupId, name: b.group_name, created_at: now(), created_by: req.user!.id } satisfies ClientGroupDoc);
-  batch.set(db.collection(C.companies).doc(companyId), companyDoc(companyId, groupId, b.company, managerId, req.user!.id));
+  batch.set(db.collection(C.companies).doc(companyId), { ...companyDoc(companyId, groupId, b.company, managerId, req.user!.id), work_types: b.work_types });
   await batch.commit();
-  await auditReq(req, { action: 'client.created', objectType: 'client_group', objectId: groupId, companyId });
+  await auditReq(req, { action: 'client.created', objectType: 'client_group', objectId: groupId, companyId, details: { login: !!contact, work_types: b.work_types } });
   res.status(201).json({ groupId, companyId, userId });
 }));
 

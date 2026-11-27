@@ -73,7 +73,11 @@ export async function clearLoginFailures(userId: string): Promise<void> {
   await db.collection(C.users).doc(userId).update({ failed_logins: 0, locked_until: null, updated_at: now() });
 }
 
-export const updatePassword = (userId: string, password: string) => setAccountPassword(userId, password);
+/** The password itself lives only in Firebase Authentication; the user record notes when it changed. */
+export async function updatePassword(userId: string, password: string): Promise<void> {
+  await setAccountPassword(userId, password);
+  await db.collection(C.users).doc(userId).update({ password_changed_at: now(), updated_at: now() });
+}
 
 /** Our own status ends access at once; Firebase's copy follows. */
 export async function setUserStatus(userId: string, status: 'active' | 'disabled'): Promise<void> {

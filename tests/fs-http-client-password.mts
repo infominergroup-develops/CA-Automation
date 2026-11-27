@@ -253,6 +253,24 @@ try {
     && (await emp.get('/api/companies')).data.length === (await dir.get('/api/companies')).data.length);
   const promoted = (await emp.get('/api/auth/me')).data.user;
   check('...with the manager default rights', promoted.role === 'manager' && promoted.rights.delete === false && promoted.rights.edit === true);
+  // Clients kept without a portal login, tagged with work types when added.
+  const quiet = await dir.post('/api/clients', { group_name: 'Joshi Group', company: { legal_name: 'Joshi Steels' }, work_types: ['gst', 'audit'] });
+  check('client added without a login', quiet.status === 201 && quiet.data.userId === null, quiet.data);
+  check('...with its work types', (await dir.get('/api/companies')).data.find((c: any) => c.id === quiet.data.companyId)?.work_types.join() === 'gst,audit');
+  check('...and nobody who can sign in for it', (await dir.get(`/api/companies/${quiet.data.companyId}`)).data.contacts.length === 0);
+  check('...its files can still be kept', (await dir.post(`/api/companies/${quiet.data.companyId}/documents`, file('itr.pdf', 'income-tax', 'joshi'))).status === 201);
+  check('unknown work type refused when adding', (await dir.post('/api/clients', { group_name: 'X Group', company: { legal_name: 'X Metals' }, work_types: ['nope'] })).status === 400);
+  check('a login can be added later', (await dir.post(`/api/clients/${quiet.data.groupId}/users`, { name: 'Anil Joshi', mobile: '9876500077', email: 'anil@joshi.test', password: 'joshi pass 2026' })).status === 201
+    && (await browser().login('client', 'anil@joshi.test', 'joshi pass 2026')).data.signedIn === true);
+
+  // Everyone changes their own password; the user record notes when.
+  check('wrong current password refused', (await emp.post('/api/me/password', { current: 'not it at all 1', next: 'deepak new pass 1' })).status === 400);
+  check('staff change their own password', (await emp.post('/api/me/password', { current: PW, next: 'deepak new pass 1' })).status === 200
+    && (await browser().login('staff', 'd@firm.test', 'deepak new pass 1')).data.signedIn === true && (await browser().login('staff', 'd@firm.test', PW)).status === 401);
+  check('weak new password refused', (await cli.post('/api/me/password', { current: 'newclient123', next: 'short' })).status === 400);
+  check('clients change their own password', (await cli.post('/api/me/password', { current: 'newclient123', next: 'ravi own pass 77' })).status === 200
+    && (await browser().login('client', 'ravi@mehta.test', 'ravi own pass 77')).data.signedIn === true);
+  check('the change is noted on the user record', !!(await db.collection('users').doc(empId).get()).data()?.password_changed_at);
   check('role and rights changes are audited', (await dir.get('/api/audit?action=user.role_changed')).data.length === 1 && (await dir.get('/api/audit?action=user.rights_set')).data.length >= 6);
 } catch (e) {
   fail++; console.error(e);

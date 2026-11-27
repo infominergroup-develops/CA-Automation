@@ -69,6 +69,8 @@ export interface UserDoc {
   /** Employees: clients the director ticked for them in the client master. */
   client_ids?: string[];
   designation_id?: string | null;
+  /** When the password was last changed (by the person, or reset by the firm). The password is in Firebase Authentication. */
+  password_changed_at?: string;
   /** File rights the director set for this person; absent = the role's defaults (see rights.ts). */
   rights?: Partial<Record<'view' | 'edit' | 'download' | 'delete', boolean>> | null;
 }

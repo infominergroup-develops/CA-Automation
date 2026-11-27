@@ -6,7 +6,7 @@ import { useClientPassword, useHasClientMaster, useHasTally, useUser } from '../
 import { DocumentsPanel } from '../components/DocumentsPanel';
 import { ReportsPanel } from './Reports';
 import {
-  Badge, Button, Card, EmptyState, ErrorText, Field, Input, LoadingRows, Modal, PageHeader, Select, StatusBadge, Table, Tabs, Td, Textarea,
+  Badge, Button, Card, Chip, EmptyState, ErrorText, Field, Input, LoadingRows, Modal, PageHeader, Select, StatusBadge, Table, Tabs, Td, Textarea,
   useLoad, useToast,
 } from '../components/ui';
 import { TaskForm, TaskTable, type TaskRow } from './Tasks';
@@ -103,6 +103,12 @@ function NewClient({ onClose, onDone }: { onClose: () => void; onDone: () => voi
   const [staff] = useLoad(() => api<StaffUser[]>('/users'));
   const clientPassword = useClientPassword();
   const [f, setF] = useState({ group_name: '', legal_name: '', pan: '', gstin: '', tally_name: '', manager_id: '', name: '', mobile: '', email: '', password: '' });
+  const hasMaster = useHasClientMaster();
+  const [types] = useLoad(() => (hasMaster ? api<{ id: string; name: string }[]>('/work-types') : Promise.resolve([])));
+  const [work, setWork] = useState<string[]>([]);
+  // Some clients only have their files kept here; they get a login only when the firm wants to share the portal.
+  const [withLogin, setWithLogin] = useState(true);
+  const loginMissing = withLogin && (!f.name || !f.mobile || !f.email || (clientPassword && !f.password));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<unknown>();
   const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value });
@@ -113,16 +119,18 @@ function NewClient({ onClose, onDone }: { onClose: () => void; onDone: () => voi
         body: {
           group_name: f.group_name || f.legal_name,
           company: { legal_name: f.legal_name, pan: f.pan, gstin: f.gstin, tally_name: f.tally_name || undefined, manager_id: f.manager_id || undefined },
-          contact: { name: f.name, mobile: f.mobile, email: f.email, ...(clientPassword && { password: f.password }) },
+          ...(withLogin && { contact: { name: f.name, mobile: f.mobile, email: f.email, ...(clientPassword && { password: f.password }) } }),
+          ...(work.length && { work_types: work }),
         },
       });
-      toast(`${f.legal_name} added. ${f.name} can now sign in${clientPassword ? ' with the password you set' : ' with their mobile'}.`);
+      toast(withLogin ? `${f.legal_name} added. ${f.name} can now sign in${clientPassword ? ' with the password you set' : ' with their mobile'}.`
+        : `${f.legal_name} added without a portal login. You can add one later under Client logins.`);
       onDone();
     } catch (e) { setErr(e); } finally { setBusy(false); }
   };
   return (
-    <Modal title="New client" description="Creates the company and a login for the client contact." onClose={onClose} wide
-      footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button busy={busy} onClick={save} disabled={!f.legal_name || !f.name || !f.mobile || !f.email || (clientPassword && !f.password) || (u.role === 'employee' && !f.manager_id)}>Create client</Button></>}>
+    <Modal title="New client" description="Creates the company, and a portal login for the client contact if you want one." onClose={onClose} wide
+      footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button busy={busy} onClick={save} disabled={!f.legal_name || loginMissing || (u.role === 'employee' && !f.manager_id)}>Create client</Button></>}>
       <div className="space-y-6">
         <fieldset>
           <legend className="text-[13px] font-semibold uppercase tracking-wide text-slate-500 mb-3">Company</legend>
@@ -142,14 +150,27 @@ function NewClient({ onClose, onDone }: { onClose: () => void; onDone: () => voi
             )}
           </div>
         </fieldset>
+        {!!types?.length && (
+          <fieldset>
+            <legend className="text-[13px] font-semibold uppercase tracking-wide text-slate-500 mb-3">Work we do for them <span className="normal-case font-normal tracking-normal">(optional)</span></legend>
+            <div className="flex flex-wrap gap-1.5">
+              {types.map((t) => <Chip key={t.id} selected={work.includes(t.id)} onToggle={() => setWork((w) => (w.includes(t.id) ? w.filter((x) => x !== t.id) : [...w, t.id]))}>{t.name}</Chip>)}
+            </div>
+          </fieldset>
+        )}
         <fieldset>
           <legend className="text-[13px] font-semibold uppercase tracking-wide text-slate-500 mb-3">Client login</legend>
-          <div className="grid sm:grid-cols-3 gap-4">
+          <label className="flex items-start gap-3 mb-4 cursor-pointer">
+            <input type="checkbox" className="mt-0.5 size-4 accent-brand-500" checked={withLogin} onChange={(e) => setWithLogin(e.target.checked)} />
+            <span className="text-sm text-ink">Give this client a login to the portal
+              <span className="block text-xs text-slate-500">Untick to only keep their files here. You can add a login later under Client logins.</span></span>
+          </label>
+          {withLogin && <div className="grid sm:grid-cols-3 gap-4">
             <Field label="Contact name"><Input value={f.name} onChange={set('name')} /></Field>
             <Field label="Mobile" hint={clientPassword ? 'Signs in with this mobile or the email' : 'Signs in with a one-time code'}><Input value={f.mobile} onChange={set('mobile')} inputMode="tel" placeholder="98765 43210" /></Field>
             <Field label="Email"><Input value={f.email} onChange={set('email')} type="email" /></Field>
             {clientPassword && <Field label="Password" hint="At least 12 characters, letters and numbers. Share it with the client privately."><Input value={f.password} onChange={set('password')} type="password" autoComplete="new-password" /></Field>}
-          </div>
+          </div>}
         </fieldset>
         <ErrorText error={err} />
       </div>
@@ -206,7 +227,7 @@ function StaffCompany() {
       {tab === 'tasks' && <Card padded={false}>{tasks && <TaskTable rows={tasks} onChanged={reloadTasks} />}</Card>}
       {tab === 'contacts' && (
         <Card title="People who can sign in for this client" padded={false} actions={<Button variant="secondary" icon={UserPlus} onClick={() => setAddContact(true)}>Add login</Button>}>
-          {!data.contacts.length ? <EmptyState icon={Users} title="No logins yet" /> : (
+          {!data.contacts.length ? <EmptyState icon={Users} title="No logins yet">Their files are kept here, but nobody from this client can sign in. Add a login when you want to share the portal with them.</EmptyState> : (
             <Table head={['Name', 'Mobile', 'Email', 'Status', ...(clientPassword ? [''] : [])]}>
               {data.contacts.map((p) => (
                 <tr key={p.id}>
