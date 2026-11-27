@@ -338,12 +338,16 @@ export function Modal({ title, description, onClose, children, footer, wide }:
   { title: string; description?: ReactNode; onClose: () => void; children: ReactNode; footer?: ReactNode; wide?: boolean | 'full' }) {
   const ref = useRef<HTMLDivElement>(null);
   const titleId = useId();
+  // The latest onClose, without re-running the effect below: pages re-render every second (the work timer), and a
+  // re-run would move the cursor back to the first box while someone is typing in another.
+  const close = useRef(onClose);
+  useEffect(() => { close.current = onClose; });
   useEffect(() => {
     const prev = document.activeElement as HTMLElement | null;
     const first = ref.current?.querySelector<HTMLElement>('[autofocus], input, select, textarea, button:not([data-close])');
     first?.focus();
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') close.current();
       if (e.key === 'Tab' && ref.current) { // keep focus inside the dialog
         const els = [...ref.current.querySelectorAll<HTMLElement>('a[href], button:not(:disabled), input:not(:disabled), select, textarea')];
         if (!els.length) return;
@@ -354,7 +358,7 @@ export function Modal({ title, description, onClose, children, footer, wide }:
     document.addEventListener('keydown', onKey);
     document.body.style.overflow = 'hidden';
     return () => { document.removeEventListener('keydown', onKey); document.body.style.overflow = ''; prev?.focus(); };
-  }, [onClose]);
+  }, []); // once, when the dialog opens
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-6">
       <div className="absolute inset-0 bg-ink-900/40 backdrop-blur-sm animate-fade-in" onClick={onClose} aria-hidden />
