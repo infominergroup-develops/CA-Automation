@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { FolderPlus, Pencil, Plus, Search, Trash2, Users, X } from 'lucide-react';
 import { api } from '../api';
 import { useUser, type Rights } from '../auth';
+import { groupIfOther } from './Clients';
 import {
   Badge, Button, Card, Chip, EmptyState, ErrorText, Field, Input, LoadingRows, PageHeader, Select, Table, Tabs, Td, useConfirm, useLoad, useToast,
 } from '../components/ui';
@@ -133,7 +134,7 @@ function WorkTypes({ clients, types, onChange }: { clients: Client[]; types: Wor
           <Table head={['Client', 'Work we do for them']}>
             {shown.map((c) => (
               <tr key={c.id}>
-                <Td><div className="font-semibold text-ink">{c.legal_name}</div><div className="text-xs text-slate-500">{c.group_name}</div></Td>
+                <Td><div className="font-semibold text-ink">{c.legal_name}</div>{groupIfOther(c) && <div className="text-xs text-slate-500">{groupIfOther(c)}</div>}</Td>
                 <Td><div className="flex flex-wrap gap-1.5">{types.map((t) => <Chip key={t.id} selected={current(c).includes(t.id)} onToggle={() => toggle(c, t.id)}>{t.name}</Chip>)}</div></Td>
               </tr>
             ))}
@@ -205,7 +206,7 @@ function GroupEditor({ set, clients, team, onSaved, onDelete }: { set: ClientSet
       <div className="space-y-6">
         <Field label="Group name"><Input value={name} onChange={(e) => setName(e.target.value)} maxLength={80} /></Field>
         <div><h3 className="text-sm font-semibold text-ink mb-2">Clients in this group</h3>
-          <PickList label="clients" items={clients.map((c) => ({ id: c.id, name: c.legal_name, hint: c.group_name }))} picked={picked} onChange={setPicked} /></div>
+          <PickList label="clients" items={clients.map((c) => ({ id: c.id, name: c.legal_name, hint: groupIfOther(c) }))} picked={picked} onChange={setPicked} /></div>
         <div><h3 className="text-sm font-semibold text-ink mb-2">Staff who get these clients</h3>
           <PickList label="staff" items={team.map((s) => ({ id: s.id, name: s.name, hint: s.role === 'manager' ? 'manager (already sees every client)' : 'employee' }))} picked={members} onChange={setMembers} /></div>
         <ErrorText error={err} />
@@ -247,7 +248,7 @@ function EmployeeTicks({ person, clients, sets, onSaved }: { person: Staff; clie
       {!!viaGroups.length && (
         <p className="text-sm text-slate-600">Also through groups: {viaGroups.map((s) => <Badge key={s.id} tone="brand">{s.name}</Badge>)}</p>
       )}
-      <PickList label="clients" items={clients.map((c) => ({ id: c.id, name: c.legal_name, hint: c.group_name }))} picked={picked} onChange={setPicked} />
+      <PickList label="clients" items={clients.map((c) => ({ id: c.id, name: c.legal_name, hint: groupIfOther(c) }))} picked={picked} onChange={setPicked} />
       <ErrorText error={err} />
       <div className="flex justify-end"><Button busy={busy} onClick={save}>Save for {person.name}</Button></div>
     </>

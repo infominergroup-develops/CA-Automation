@@ -8,7 +8,7 @@ import { useState } from 'react';
 import { api, fmtDate } from '../api';
 import { useUser } from '../auth';
 import { Button, Card, EmptyState, ErrorText, LoadingRows, PageHeader, Skeleton, Stat, StatusBadge, useLoad } from '../components/ui';
-import { RaiseRequest } from './Clients';
+import { RaiseRequest, groupIfOther } from './Clients';
 
 interface StaffDash {
   myOpenTasks: number; myRework: number; toReview: number; accessRequests: number; clientRequests: number;
@@ -175,7 +175,7 @@ function ClientHome() {
                       <span className="grid place-items-center size-11 rounded-xl bg-brand-50 text-brand-700 shrink-0"><Building2 className="size-5" aria-hidden /></span>
                       <span className="min-w-0 flex-1">
                         <span className="block font-semibold text-ink truncate">{c.legal_name}</span>
-                        <span className="block text-xs text-slate-500 font-mono mt-0.5">{c.gstin ?? c.group_name}</span>
+                        {(c.gstin || groupIfOther(c)) && <span className="block text-xs text-slate-500 font-mono mt-0.5">{c.gstin || groupIfOther(c)}</span>}
                       </span>
                       <ChevronRight className="size-5 text-slate-300 group-hover:text-brand-700 transition-colors" aria-hidden />
                     </Link>

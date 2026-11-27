@@ -17,6 +17,10 @@ interface Company {
 }
 export interface StaffUser { id: string; role: string; name: string; email: string; mobile: string; status: string; designation?: string | null }
 
+/** The client group, only when it is not just the company's own name again (it defaults to that). */
+export const groupIfOther = (c: { legal_name: string; group_name: string }) =>
+  c.group_name && c.group_name.trim().toLowerCase() !== c.legal_name.trim().toLowerCase() ? c.group_name : '';
+
 export function Clients() {
   const u = useUser();
   const hasMaster = useHasClientMaster();
@@ -59,7 +63,7 @@ export function Clients() {
                   <tr key={c.id} className="hover:bg-slate-50/70 transition-colors">
                     <Td>
                       <Link to={`/company/${c.id}`} className="font-semibold text-ink hover:text-brand-700">{c.legal_name}</Link>
-                      <div className="text-xs text-slate-500">{c.group_name}</div>
+                      {groupIfOther(c) && <div className="text-xs text-slate-500">Group · {groupIfOther(c)}</div>}
                       {!!c.work_types?.length && <div className="flex flex-wrap gap-1 mt-1">{c.work_types.map((w) => <Badge key={w} tone="slate">{workName(w)}</Badge>)}</div>}
                     </Td>
                     <Td className="font-mono text-xs text-slate-600">{c.gstin ?? '—'}</Td>
@@ -81,7 +85,7 @@ export function Clients() {
                   <Link to={`/company/${c.id}`} className="flex items-center gap-3 px-5 py-3.5">
                     <span className="min-w-0 flex-1">
                       <span className="block font-semibold text-ink truncate">{c.legal_name}</span>
-                      <span className="block text-xs text-slate-500">{employee ? c.group_name : `${c.open_tasks} open tasks · ${c.manager_name ?? 'Unassigned'}`}</span>
+                      <span className="block text-xs text-slate-500">{employee ? groupIfOther(c) : `${c.open_tasks} open tasks · ${c.manager_name ?? 'Unassigned'}`}</span>
                     </span>
                     {!!c.pending_docs && <Badge tone="amber" dot>{c.pending_docs}</Badge>}
                     <ChevronRight className="size-4 text-slate-300" aria-hidden />
@@ -139,7 +143,6 @@ function NewClient({ onClose, onDone }: { onClose: () => void; onDone: () => voi
             <Field label="Client group" optional hint="Owner or family group. Defaults to the company name."><Input value={f.group_name} onChange={set('group_name')} /></Field>
             <Field label="PAN" optional><Input value={f.pan} onChange={set('pan')} maxLength={10} className="uppercase font-mono" placeholder="AAAAA9999A" /></Field>
             <Field label="GSTIN" optional><Input value={f.gstin} onChange={set('gstin')} maxLength={15} className="uppercase font-mono" placeholder="09AAAAA9999A1Z5" /></Field>
-            <Field label="Name in Tally" optional hint="Used to match the Tally sync later"><Input value={f.tally_name} onChange={set('tally_name')} /></Field>
             {u.role !== 'manager' && (
               <Field label="Relationship manager">
                 <Select value={f.manager_id} onChange={set('manager_id')}>
@@ -209,7 +212,7 @@ function StaffCompany() {
         title={<span className="flex items-center gap-3"><span className="grid place-items-center size-11 rounded-xl bg-brand-50 text-brand-700 shrink-0"><Building2 className="size-5" aria-hidden /></span>{c.legal_name}</span>}
         subtitle={
           <span className="flex flex-wrap gap-2 mt-1">
-            {c.group_name && <Badge>Group · {c.group_name}</Badge>}
+            {groupIfOther(c) && <Badge>Group · {groupIfOther(c)}</Badge>}
             {c.gstin && <Badge><span className="font-mono">GSTIN {c.gstin}</span></Badge>}
             {c.pan && <Badge><span className="font-mono">PAN {c.pan}</span></Badge>}
             {c.manager_name && <Badge tone="brand">Manager · {c.manager_name}</Badge>}
