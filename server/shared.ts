@@ -16,6 +16,9 @@ export const zDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD');
 export const zMobile = z.string().trim().transform((s) => s.replace(/[\s-]/g, '').replace(/^(\+91|0)/, ''))
   .pipe(z.string().regex(/^[6-9]\d{9}$/, 'Enter a 10-digit Indian mobile number'));
 export const zEmail = z.string().trim().toLowerCase().pipe(z.email());
+/** A sign-in name: 3-40 lowercase letters, numbers, dots, dashes or underscores, starting with a letter or number. */
+export const USERNAME_RE = /^[a-z0-9][a-z0-9._-]{2,39}$/;
+export const zUsername = z.string().trim().toLowerCase().regex(USERNAME_RE, 'Use 3-40 letters, numbers, dots, dashes or underscores, starting with a letter or number');
 export const zPan = z.string().trim().toUpperCase().regex(/^[A-Z]{5}\d{4}[A-Z]$/, 'Invalid PAN');
 export const zGstin = z.string().trim().toUpperCase().regex(/^\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/, 'Invalid GSTIN');
 

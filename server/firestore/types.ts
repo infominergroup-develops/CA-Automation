@@ -4,6 +4,7 @@ export const C = {
   users: 'users',
   uniqueEmail: 'unique_user_email',
   uniqueMobile: 'unique_user_mobile',
+  uniqueUsername: 'unique_username',
   sessions: 'sessions',
   challenges: 'login_challenges',
   audit: 'audit_log',
@@ -71,6 +72,10 @@ export interface UserDoc {
   /** Managers: false once the director limits them to chosen clients (absent = every client). */
   all_clients?: boolean;
   designation_id?: string | null;
+  /** What the person signs in with; unique. Email and mobile are contact details that several logins may share. */
+  username?: string;
+  /** The Firebase Authentication account's email: the real email for accounts made before usernames, else an internal address. */
+  auth_email?: string;
   /** When the password was last changed (by the person, or reset by the firm). The password is in Firebase Authentication. */
   password_changed_at?: string;
   /** File rights the director set for this person; absent = the role's defaults (see rights.ts). */

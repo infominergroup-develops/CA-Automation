@@ -32,6 +32,9 @@ const { purgeExpiredSessions } = await import('./firestore/sessions.ts');
 
 await ensureCategories(); // adds any document type introduced by this version
 await ensureWorkTypes();
+const { ensureUsernames } = await import('./firestore/users.ts');
+const named = await ensureUsernames(); // logins made before usernames get one, made from their email
+if (named) console.log(`Usernames given to ${named} existing login${named > 1 ? 's' : ''}.`);
 const accepted = await acceptStaffUploads(); // staff uploads need no review
 if (accepted) await audit({ action: 'document.staff_uploads_accepted', objectType: 'document', details: { count: accepted } });
 

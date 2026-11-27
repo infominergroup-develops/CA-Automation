@@ -15,7 +15,7 @@ import { C } from '../server/firestore/types.ts';
 let pass = 0, fail = 0;
 const check = (name: string, cond: boolean, extra: unknown = '') => { cond ? pass++ : fail++; console.log(`${cond ? 'PASS' : 'FAIL'}  ${name}${cond ? '' : '  ' + JSON.stringify(extra)}`); };
 async function wipe(col: string) { const s = await db.collection(col).get(); await Promise.all(s.docs.map((d) => d.ref.delete())); }
-for (const c of [C.users, C.uniqueEmail, C.uniqueMobile, C.consents, C.dpdpRequests, C.breachRegister, C.documents, C.audit, C.counters, C.clientGroups]) await wipe(c);
+for (const c of [C.users, C.uniqueEmail, C.uniqueMobile, C.uniqueUsername, C.consents, C.dpdpRequests, C.breachRegister, C.documents, C.audit, C.counters, C.clientGroups]) await wipe(c);
 await ensureSettingDefaults();
 
 await db.collection(C.clientGroups).doc('g1').set({ name: 'Demo Group' });

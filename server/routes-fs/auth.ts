@@ -9,7 +9,7 @@ import { hasCurrentConsent } from '../firestore/consents.ts';
 import { checkPassword } from '../firestore/firebase-auth.ts';
 import { createSession, destroySession } from '../firestore/sessions.ts';
 import { getSetting } from '../firestore/settings.ts';
-import { clearLoginFailures, findUserByIdentifier, getUserById, isLocked, recordLoginFailure } from '../firestore/users.ts';
+import { SharedContactError, clearLoginFailures, findUserByIdentifier, getUserById, isLocked, recordLoginFailure } from '../firestore/users.ts';
 import { HttpError, auditReq, clientIp, h, mask, parse, requireAuth, setSessionCookie, clearSessionCookie } from '../firestore/http.ts';
 
 export const authRouter = Router();
@@ -37,7 +37,10 @@ const loginSchema = z.discriminatedUnion('mode', [
 /** Step 1: identify. Clients → OTP. Staff → password + OTP. With OTP off, both sign in with a password alone. */
 authRouter.post('/login', loginLimiter, h(async (req, res) => {
   const body = parse(loginSchema, req.body);
-  const u = await findUserByIdentifier(body.identifier);
+  const u = await findUserByIdentifier(body.identifier).catch((e) => {
+    if (e instanceof SharedContactError) throw new HttpError(400, 'Several logins share this email or mobile. Sign in with your username.');
+    throw e;
+  });
 
   if (body.mode === 'client' && config.otpProvider !== 'off') {
     const valid = !!u && u.role === 'client' && u.status === 'active' && !isLocked(u);

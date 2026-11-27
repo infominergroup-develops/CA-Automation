@@ -15,7 +15,7 @@ interface Company {
   id: string; legal_name: string; pan: string | null; gstin: string | null; tally_name: string | null; group_id: string;
   group_name: string; manager_name: string | null; pending_docs: number; open_tasks: number; work_types?: string[];
 }
-export interface StaffUser { id: string; role: string; name: string; email: string; mobile: string; status: string; designation?: string | null }
+export interface StaffUser { id: string; role: string; name: string; email: string; mobile: string; status: string; designation?: string | null; username?: string | null }
 
 /** The client group, only when it is not just the company's own name again (it defaults to that). */
 export const groupIfOther = (c: { legal_name: string; group_name: string }) =>
@@ -106,7 +106,7 @@ function NewClient({ onClose, onDone }: { onClose: () => void; onDone: () => voi
   const toast = useToast();
   const [staff] = useLoad(() => api<StaffUser[]>('/users'));
   const clientPassword = useClientPassword();
-  const [f, setF] = useState({ group_name: '', legal_name: '', pan: '', gstin: '', tally_name: '', manager_id: '', name: '', mobile: '', email: '', password: '' });
+  const [f, setF] = useState({ group_name: '', legal_name: '', pan: '', gstin: '', tally_name: '', manager_id: '', name: '', mobile: '', email: '', password: '', username: '' });
   const hasMaster = useHasClientMaster();
   const [types] = useLoad(() => (hasMaster ? api<{ id: string; name: string }[]>('/work-types') : Promise.resolve([])));
   const [work, setWork] = useState<string[]>([]);
@@ -119,15 +119,15 @@ function NewClient({ onClose, onDone }: { onClose: () => void; onDone: () => voi
   const save = async () => {
     setBusy(true); setErr(undefined);
     try {
-      await api('/clients', {
+      const made = await api<{ username: string | null }>('/clients', {
         body: {
           group_name: f.group_name || f.legal_name,
           company: { legal_name: f.legal_name, pan: f.pan, gstin: f.gstin, tally_name: f.tally_name || undefined, manager_id: f.manager_id || undefined },
-          ...(withLogin && { contact: { name: f.name, mobile: f.mobile, email: f.email, ...(clientPassword && { password: f.password }) } }),
+          ...(withLogin && { contact: { name: f.name, mobile: f.mobile, email: f.email, username: f.username.trim(), ...(clientPassword && { password: f.password }) } }),
           ...(work.length && { work_types: work }),
         },
       });
-      toast(withLogin ? `${f.legal_name} added. ${f.name} can now sign in${clientPassword ? ' with the password you set' : ' with their mobile'}.`
+      toast(withLogin ? `${f.legal_name} added. ${f.name} signs in with the username ${made.username}${clientPassword ? ' and the password you set' : ''}.`
         : `${f.legal_name} added without a portal login. You can add one later under Client logins.`);
       onDone();
     } catch (e) { setErr(e); } finally { setBusy(false); }
@@ -170,8 +170,9 @@ function NewClient({ onClose, onDone }: { onClose: () => void; onDone: () => voi
           </label>
           {withLogin && <div className="grid sm:grid-cols-3 gap-4">
             <Field label="Contact name"><Input value={f.name} onChange={set('name')} /></Field>
-            <Field label="Mobile" hint={clientPassword ? 'Signs in with this mobile or the email' : 'Signs in with a one-time code'}><Input value={f.mobile} onChange={set('mobile')} inputMode="tel" placeholder="98765 43210" /></Field>
+            <Field label="Mobile"><Input value={f.mobile} onChange={set('mobile')} inputMode="tel" placeholder="98765 43210" /></Field>
             <Field label="Email"><Input value={f.email} onChange={set('email')} type="email" /></Field>
+            <Field label="Username" optional hint="Optional. Made from the email when left empty. Email and mobile can be shared with other logins; the username cannot."><Input value={f.username} onChange={set('username')} autoComplete="off" placeholder="e.g. ravi.mehta" /></Field>
             {clientPassword && <Field label="Password" hint="At least 12 characters, letters and numbers. Share it with the client privately."><Input value={f.password} onChange={set('password')} type="password" autoComplete="new-password" /></Field>}
           </div>}
         </fieldset>
@@ -192,7 +193,7 @@ function StaffCompany() {
   const u = useUser();
   const managerial = u.role === 'director' || u.role === 'manager';
   const [data, err, reload] = useLoad(() => managerial
-    ? api<{ company: Company; contacts: { id: string; name: string; mobile: string; email: string | null; status: string }[] }>(`/companies/${id}`)
+    ? api<{ company: Company; contacts: { id: string; name: string; mobile: string; email: string | null; status: string; username: string | null }[] }>(`/companies/${id}`)
     : api<Company[]>('/companies').then((cs) => ({ company: cs.find((c) => c.id === id)!, contacts: [] })), [id]);
   const [tasks, , reloadTasks] = useLoad(() => api<TaskRow[]>(`/tasks?company_id=${id}`), [id]);
   const [params, setParams] = useSearchParams();
@@ -231,10 +232,10 @@ function StaffCompany() {
       {tab === 'contacts' && (
         <Card title="People who can sign in for this client" padded={false} actions={<Button variant="secondary" icon={UserPlus} onClick={() => setAddContact(true)}>Add login</Button>}>
           {!data.contacts.length ? <EmptyState icon={Users} title="No logins yet">Their files are kept here, but nobody from this client can sign in. Add a login when you want to share the portal with them.</EmptyState> : (
-            <Table head={['Name', 'Mobile', 'Email', 'Status', ...(clientPassword ? [''] : [])]}>
+            <Table head={['Name', 'Username', 'Mobile', 'Email', 'Status', ...(clientPassword ? [''] : [])]}>
               {data.contacts.map((p) => (
                 <tr key={p.id}>
-                  <Td className="font-medium text-ink">{p.name}</Td><Td className="tabular-nums">{p.mobile}</Td><Td>{p.email ?? '—'}</Td><Td><StatusBadge status={p.status} /></Td>
+                  <Td className="font-medium text-ink">{p.name}</Td><Td className="font-mono text-xs">{p.username ?? '—'}</Td><Td className="tabular-nums">{p.mobile}</Td><Td>{p.email ?? '—'}</Td><Td><StatusBadge status={p.status} /></Td>
                   {clientPassword && <Td className="text-right"><Button size="sm" variant="secondary" onClick={() => setSettingPassword(p)}>Set password</Button></Td>}
                 </tr>
               ))}
@@ -273,20 +274,24 @@ function SetClientPassword({ contact, onClose }: { contact: { id: string; name: 
 function AddContact({ groupId, onClose, onDone }: { groupId: string; onClose: () => void; onDone: () => void }) {
   const toast = useToast();
   const clientPassword = useClientPassword();
-  const [f, setF] = useState({ name: '', mobile: '', email: '', password: '' });
+  const [f, setF] = useState({ name: '', mobile: '', email: '', password: '', username: '' });
   const [err, setErr] = useState<unknown>();
   const [busy, setBusy] = useState(false);
   const save = async () => {
     setBusy(true); setErr(undefined);
-    try { await api(`/clients/${groupId}/users`, { body: clientPassword ? f : { ...f, password: undefined } }); toast(`${f.name} can now sign in.`); onDone(); } catch (e) { setErr(e); } finally { setBusy(false); }
+    try {
+      const made = await api<{ username: string }>(`/clients/${groupId}/users`, { body: { ...f, username: f.username.trim(), password: clientPassword ? f.password : undefined } });
+      toast(`${f.name} signs in with the username ${made.username}.`); onDone();
+    } catch (e) { setErr(e); } finally { setBusy(false); }
   };
   return (
     <Modal title="Add client login" description="This person will see every company in the client group." onClose={onClose}
       footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button busy={busy} onClick={save} disabled={!f.name || !f.mobile || !f.email || (clientPassword && !f.password)}>Add login</Button></>}>
       <div className="space-y-4">
         <Field label="Name"><Input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
-        <Field label="Mobile" hint={clientPassword ? 'Signs in with this mobile or the email' : 'Receives the one-time sign-in code'}><Input value={f.mobile} onChange={(e) => setF({ ...f, mobile: e.target.value })} inputMode="tel" /></Field>
+        <Field label="Mobile"><Input value={f.mobile} onChange={(e) => setF({ ...f, mobile: e.target.value })} inputMode="tel" /></Field>
         <Field label="Email"><Input value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} type="email" /></Field>
+        <Field label="Username" optional hint="Optional. Made from the email when left empty. Email and mobile can be shared with other logins; the username cannot."><Input value={f.username} onChange={(e) => setF({ ...f, username: e.target.value })} autoComplete="off" placeholder="e.g. ravi.mehta" /></Field>
         {clientPassword && <Field label="Password" hint="At least 12 characters, letters and numbers. Share it with the client privately."><Input value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} type="password" autoComplete="new-password" /></Field>}
         <ErrorText error={err} />
       </div>

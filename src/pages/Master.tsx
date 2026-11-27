@@ -339,7 +339,7 @@ function Designations({ titles, staff, onChange }: { titles: Designation[]; staf
   );
 }
 
-interface Person { id: string; name: string; role: string; status: string; email: string | null; group_name: string | null; rights: Rights; custom: boolean }
+interface Person { id: string; name: string; role: string; status: string; email: string | null; username: string | null; group_name: string | null; rights: Rights; custom: boolean }
 const RIGHT_LABEL: Record<keyof Rights, string> = { view: 'View', edit: 'Review', move: 'Move files', download: 'Download', delete: 'Delete files', deleteFolder: 'Delete folders' };
 const title = (role: string) => role[0].toUpperCase() + role.slice(1);
 
@@ -401,7 +401,7 @@ function RolesAndRights({ onChange }: { onChange: () => void }) {
         <Table head={['Name', 'Role', 'View', 'Review', 'Move files', 'Download', 'Delete files', 'Delete folders', '']}>
           {staff.map((p) => (
             <tr key={p.id}>
-              <Td><div className="font-semibold text-ink">{p.name}{p.id === me.id && <span className="text-xs font-normal text-slate-400"> (you)</span>}</div><div className="text-xs text-slate-500">{p.email}</div></Td>
+              <Td><div className="font-semibold text-ink">{p.name}{p.id === me.id && <span className="text-xs font-normal text-slate-400"> (you)</span>}</div><div className="text-xs text-slate-500">{p.username ?? p.email}</div></Td>
               <Td>
                 <Select value={p.role} disabled={p.id === me.id} onChange={(e) => setRole(p, e.target.value)} aria-label={`Role for ${p.name}`} className="w-36">
                   {['director', 'manager', 'employee'].map((r) => <option key={r} value={r}>{title(r)}</option>)}
@@ -425,7 +425,7 @@ function RolesAndRights({ onChange }: { onChange: () => void }) {
           <Table head={['Name', 'Client', 'View', 'Download', 'Delete own uploads', '']}>
             {clients.map((p) => (
               <tr key={p.id}>
-                <Td><div className="font-semibold text-ink">{p.name}</div><div className="text-xs text-slate-500">{p.email}</div></Td>
+                <Td><div className="font-semibold text-ink">{p.name}</div><div className="text-xs text-slate-500">{p.username ?? p.email}</div></Td>
                 <Td className="text-slate-600">{p.group_name}</Td>
                 {(['view', 'download', 'delete'] as const).map((r) => box(p, r))}
                 {resetCell(p)}

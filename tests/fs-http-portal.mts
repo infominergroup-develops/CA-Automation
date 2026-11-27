@@ -76,7 +76,7 @@ try {
   const users = await dir.get('/api/users');
   check('staff list has 4, no password hashes', users.data.length === 4 && !('password_hash' in users.data[0]), users.data);
   check('new staff: weak password refused', (await dir.post('/api/users', { name: 'Raashi', role: 'employee', email: 'r@firm.test', mobile: '9000000006', password: 'short' })).status === 400);
-  check('new staff: duplicate email 409', (await dir.post('/api/users', { name: 'Xavier', role: 'employee', email: 's@firm.test', mobile: '9000000007', password: 'longenough123' })).status === 409);
+  check('new staff: a taken username 409', (await dir.post('/api/users', { name: 'Xavier', role: 'employee', email: 'x@firm.test', mobile: '9000000007', password: 'longenough123', username: users.data[0].username })).status === 409);
   const raashi = await dir.post('/api/users', { name: 'Raashi', role: 'employee', email: 'r@firm.test', mobile: '9000000006', password: 'longenough123' });
   check('new staff created', raashi.status === 201);
 
@@ -87,7 +87,7 @@ try {
   });
   check('client group + company + login created', client.status === 201 && client.data.companyId, client.data);
   const companyId = client.data.companyId as string, groupId = client.data.groupId as string;
-  check('duplicate client mobile 409', (await dir.post('/api/clients', { group_name: 'Dup', company: { legal_name: 'Dup Co' }, contact: { name: 'Dup', mobile: '9876543210', email: 'dup@dup.test' } })).status === 409);
+  check('a client login with a taken username 409', (await dir.post('/api/clients', { group_name: 'Dup', company: { legal_name: 'Dup Co' }, contact: { name: 'Dup', mobile: '9876500001', email: 'dup@dup.test', username: client.data.username } })).status === 409);
   check('client login needs an email', (await dir.post('/api/clients', { group_name: 'Dup', company: { legal_name: 'Dup Co' }, contact: { name: 'Dup', mobile: '9876500000' } })).status === 400);
   const sameFolder = { group_name: 'Dup', company: { legal_name: ' mehta traders PVT LTD ' }, contact: { name: 'Dup', mobile: '9876500000', email: 'dup@dup.test' } };
   check('two clients cannot share a folder name', (await dir.post('/api/clients', sameFolder)).status === 409);

@@ -50,10 +50,10 @@ export const deleteAccount = (id: string) => accounts(':delete', { localId: id }
 const REJECTED = ['INVALID_LOGIN_CREDENTIALS', 'INVALID_PASSWORD', 'EMAIL_NOT_FOUND', 'USER_DISABLED', 'INVALID_EMAIL', 'MISSING_PASSWORD'];
 
 /** Checks a password. Unknown users are checked too, so response time does not reveal which accounts exist. */
-export async function checkPassword(u: { id: string; email: string | null } | undefined, password: string): Promise<boolean> {
+export async function checkPassword(u: { id: string; email: string | null; auth_email?: string } | undefined, password: string): Promise<boolean> {
   try {
     const r = await request('/v1/accounts:signInWithPassword', { 'content-type': 'application/json', 'x-goog-api-key': await apiKey() },
-      { email: u?.email ?? 'unknown@example.invalid', password: norm(password), returnSecureToken: false });
+      { email: u?.auth_email ?? u?.email ?? 'unknown@example.invalid', password: norm(password), returnSecureToken: false });
     // The uid must be this user's: an account someone registered themselves with the same email is not ours.
     return !!u && r.localId === u.id;
   } catch (e) {

@@ -128,10 +128,9 @@ export function Login() {
               </div>
 
               <form onSubmit={requestCode} className="mt-6 space-y-4" noValidate>
-                <Field label={mode === 'client' ? 'Registered mobile number or email' : 'Work email'}>
+                <Field label="Username" hint="Or your email or mobile, if no one else's login uses it">
                   <Input autoFocus required autoComplete="username" value={identifier} onChange={(e) => setIdentifier(e.target.value)}
-                    inputMode={mode === 'client' ? 'tel' : 'email'} type={mode === 'staff' ? 'email' : 'text'}
-                    placeholder={mode === 'client' ? '98765 43210' : 'name@firm.in'} />
+                    type="text" autoCapitalize="none" spellCheck={false} placeholder="e.g. ravi.mehta" />
                 </Field>
                 {needsPassword && (
                   <Field label="Password">

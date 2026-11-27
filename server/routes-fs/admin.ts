@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { rateLimit } from 'express-rate-limit';
 import { z } from 'zod';
 import { config } from '../config.ts';
-import { zEmail, zGstin, zId, zMobile, zPan, zText } from '../shared.ts';
+import { zEmail, zGstin, zId, zMobile, zPan, zText, zUsername } from '../shared.ts';
 import { passwordProblem } from '../security/crypto.ts';
 import { assertCompany, companyScope, userNames } from '../firestore/authz.ts';
 import { db } from '../firestore/client.ts';
@@ -13,7 +13,7 @@ import { getById, newId, now, query } from '../firestore/store.ts';
 import { FolderExistsError, addCategory, listCategories, segment, type DocumentDoc } from '../firestore/documents.ts';
 import { checkPassword } from '../firestore/firebase-auth.ts';
 import {
-  UniquenessError, ackMonitoringNotice, createClientUser, createStaffUser, getUserById, setUserStatus, updatePassword,
+  UniquenessError, ackMonitoringNotice, createClientLogin, createStaffLogin, getUserById, setUserStatus, updatePassword,
 } from '../firestore/users.ts';
 import { C, type AccessGrantDoc, type ClientGroupDoc, type CompanyDoc, type DesignationDoc, type TaskDoc, type UserDoc } from '../firestore/types.ts';
 import { OPEN_STATUSES } from '../firestore/tasks.ts';
@@ -30,8 +30,8 @@ adminRouter.get('/users', requireRole('director', 'manager', 'employee'), h(asyn
   const rows = (await query<UserDoc>(C.users))
     .filter((u) => u.role !== 'client' && (req.user!.role === 'director' || u.status === 'active'))
     .sort((a, b) => ROLE_ORDER.indexOf(a.role) - ROLE_ORDER.indexOf(b.role) || a.name.localeCompare(b.name))
-    .map(({ id, role, name, email, mobile, status, created_at, client_ids, designation_id, all_clients }) => ({
-      id, role, name, email, mobile, status, created_at,
+    .map(({ id, role, name, email, mobile, status, created_at, client_ids, designation_id, all_clients, username }) => ({
+      id, role, name, email, mobile, status, created_at, username: username ?? null,
       designation_id: designation_id ?? null, designation: (designation_id && titles.get(designation_id)) || null,
       ...(req.user!.role === 'director' && { client_ids: client_ids ?? [], ...(role === 'manager' && { all_clients: all_clients !== false }) }),
     }));
@@ -48,6 +48,7 @@ const newStaff = z.object({
   email: zEmail,
   mobile: zMobile,
   password: z.string().min(12).max(200),
+  username: zUsername.optional().or(z.literal('').transform(() => undefined)),
 });
 
 adminRouter.post('/users', requireRole('director', 'manager'), h(async (req, res) => {
@@ -55,10 +56,10 @@ adminRouter.post('/users', requireRole('director', 'manager'), h(async (req, res
   if (req.user!.role === 'manager' && b.role !== 'employee') throw new HttpError(403, 'Managers can only add employees.');
   const problem = passwordProblem(b.password);
   if (problem) throw new HttpError(400, problem);
-  const userId = await createStaffUser({ ...b, createdBy: req.user!.id })
-    .catch((e) => duplicate(e, 'A user with this email or mobile already exists.'));
-  await auditReq(req, { action: 'user.created', objectType: 'user', objectId: userId, details: { role: b.role } });
-  res.status(201).json({ id: userId });
+  const { id: userId, username } = await createStaffLogin({ ...b, createdBy: req.user!.id })
+    .catch((e) => duplicate(e, 'This username is taken. Choose another.'));
+  await auditReq(req, { action: 'user.created', objectType: 'user', objectId: userId, details: { role: b.role, username } });
+  res.status(201).json({ id: userId, username });
 }));
 
 adminRouter.patch('/users/:id/status', requireRole('director'), h(async (req, res) => {
@@ -85,7 +86,7 @@ const passwordLimiter = rateLimit({ windowMs: 15 * 60e3, limit: 10, standardHead
 adminRouter.post('/me/password', requireAuth, passwordLimiter, h(async (req, res) => {
   const b = parse(z.object({ current: z.string().max(200), next: z.string().max(200) }), req.body);
   if (req.user!.role === 'client' && config.otpProvider !== 'off') throw new HttpError(400, 'Clients sign in with a one-time code.');
-  if (!(await checkPassword(req.user, b.current))) throw new HttpError(400, 'Current password is incorrect.');
+  if (!(await checkPassword(await getUserById(req.user!.id), b.current))) throw new HttpError(400, 'Current password is incorrect.');
   const problem = passwordProblem(b.next);
   if (problem) throw new HttpError(400, problem);
   await updatePassword(req.user!.id, b.next);
@@ -112,7 +113,10 @@ const companyFields = z.object({
   manager_id: zId.optional(),
 });
 // Firebase accounts are email-based, so every login needs one.
-const contactFields = z.object({ name: zText(120).min(2), mobile: zMobile, email: zEmail, password: z.string().max(200).optional() });
+const contactFields = z.object({
+  name: zText(120).min(2), mobile: zMobile, email: zEmail, password: z.string().max(200).optional(),
+  username: zUsername.optional().or(z.literal('').transform(() => undefined)), // made from the email when left out
+});
 
 /** Each client's files live in a bucket folder named after it, so two clients may not share a folder name. */
 // shortcut: check-then-write, so two simultaneous creates could both pass; reserve the name in a transaction if that ever matters.
@@ -168,17 +172,18 @@ adminRouter.post('/clients', requireRole('director', 'manager', 'employee'), h(a
     if (!b.work_types.every((w) => known.has(w))) throw new HttpError(400, 'Unknown work type.');
   }
   const groupId = newId(), companyId = newId();
-  // The login first: it is the step that can fail on a duplicate mobile/email, before anything else is written.
-  const userId = contact
-    ? await createClientUser({ name: contact.name, mobile: contact.mobile, email: contact.email, clientGroupId: groupId, createdBy: req.user!.id, password })
-      .catch((e) => duplicate(e, 'A user with this mobile or email already exists.'))
+  // The login first: it is the step that can fail (a username already taken), before anything else is written.
+  const login = contact
+    ? await createClientLogin({ name: contact.name, mobile: contact.mobile, email: contact.email, username: contact.username, clientGroupId: groupId, createdBy: req.user!.id, password })
+      .catch((e) => duplicate(e, 'This username is taken. Choose another.'))
     : null;
+  const userId = login?.id ?? null;
   const batch = db.batch();
   batch.set(db.collection(C.clientGroups).doc(groupId), { id: groupId, name: b.group_name, created_at: now(), created_by: req.user!.id } satisfies ClientGroupDoc);
   batch.set(db.collection(C.companies).doc(companyId), { ...companyDoc(companyId, groupId, b.company, managerId, req.user!.id), work_types: b.work_types });
   await batch.commit();
   await auditReq(req, { action: 'client.created', objectType: 'client_group', objectId: groupId, companyId, details: { login: !!contact, work_types: b.work_types } });
-  res.status(201).json({ groupId, companyId, userId });
+  res.status(201).json({ groupId, companyId, userId, username: login?.username ?? null });
 }));
 
 adminRouter.post('/clients/:groupId/companies', requireRole('director', 'manager'), h(async (req, res) => {
@@ -204,10 +209,10 @@ adminRouter.post('/clients/:groupId/users', requireRole('director', 'manager'), 
   if (!group) throw new HttpError(404, 'Not found.');
   await assertGroupInScope(req.user!, group.id);
   const password = clientPassword(b.password);
-  const userId = await createClientUser({ name: b.name, mobile: b.mobile, email: b.email, clientGroupId: group.id, createdBy: req.user!.id, password })
-    .catch((e) => duplicate(e, 'A user with this mobile or email already exists.'));
-  await auditReq(req, { action: 'client.user_added', objectType: 'user', objectId: userId });
-  res.status(201).json({ id: userId });
+  const { id: userId, username } = await createClientLogin({ name: b.name, mobile: b.mobile, email: b.email, username: b.username, clientGroupId: group.id, createdBy: req.user!.id, password })
+    .catch((e) => duplicate(e, 'This username is taken. Choose another.'));
+  await auditReq(req, { action: 'client.user_added', objectType: 'user', objectId: userId, details: { username } });
+  res.status(201).json({ id: userId, username });
 }));
 
 /** Sets or resets a client's sign-in password (clients use one while OTP is off). Signs them out everywhere. */
@@ -261,7 +266,7 @@ adminRouter.get('/companies/:id', requireRole('director', 'manager'), h(async (r
   ]);
   res.json({
     company: { ...c, group_name: group?.name ?? '', manager_name: manager?.name ?? null },
-    contacts: contacts.sort((a, b) => a.name.localeCompare(b.name)).map(({ id, name, mobile, email, status }) => ({ id, name, mobile, email, status })),
+    contacts: contacts.sort((a, b) => a.name.localeCompare(b.name)).map(({ id, name, mobile, email, status, username }) => ({ id, name, mobile, email, status, username: username ?? null })),
   });
 }));
 

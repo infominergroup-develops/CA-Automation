@@ -5,7 +5,7 @@
 import './emulator-only.mts';
 import { db } from '../server/firestore/client.ts';
 import { checkPassword, createAccount } from '../server/firestore/firebase-auth.ts';
-import { createStaffUser, createClientUser, findUserByIdentifier, getUserById, isLocked, recordLoginFailure, setUserStatus, updatePassword, UniquenessError } from '../server/firestore/users.ts';
+import { SharedContactError, createStaffLogin, createStaffUser, createClientUser, findUserByIdentifier, getUserById, isLocked, recordLoginFailure, setUserStatus, updatePassword, UniquenessError } from '../server/firestore/users.ts';
 import { createChallenge, verifyChallenge } from '../server/firestore/challenges.ts';
 import { createSession, loadValidSession, destroySession, endAllSessions } from '../server/firestore/sessions.ts';
 import { audit, verifyAuditChain } from '../server/firestore/audit.ts';
@@ -18,7 +18,7 @@ const check = (name: string, cond: boolean, extra: unknown = '') => { cond ? pas
 
 // Fresh slate: delete the collections this test touches.
 async function wipe(col: string) { const s = await db.collection(col).get(); await Promise.all(s.docs.map((d) => d.ref.delete())); }
-for (const c of [C.users, C.uniqueEmail, C.uniqueMobile, C.sessions, C.challenges, C.audit, C.counters, C.consents, C.settings, C.clientGroups]) await wipe(c);
+for (const c of [C.users, C.uniqueEmail, C.uniqueMobile, C.uniqueUsername, C.sessions, C.challenges, C.audit, C.counters, C.consents, C.settings, C.clientGroups]) await wipe(c);
 
 await ensureSettingDefaults();
 
@@ -36,12 +36,18 @@ check('no password or hash is stored in Firestore', !/hash|password/i.test(Objec
 await createAccount('someone-else', 'self@demo.test', 'Self', 'correct horse 99');
 check('an account someone else registered with the same email is refused', !(await checkPassword({ id: 'our-user', email: 'self@demo.test' }, 'correct horse 99')));
 
-let dupEmail = false, dupMobile = false;
-try { await createStaffUser({ role: 'manager', name: 'X', email: 'asha@demo.test', mobile: '9000000099', password: 'another one 123' }); } catch (e) { dupEmail = e instanceof UniquenessError; }
-try { await createStaffUser({ role: 'manager', name: 'Y', email: 'new@demo.test', mobile: '9000000001', password: 'another one 123' }); } catch (e) { dupMobile = e instanceof UniquenessError; }
-check('duplicate email rejected atomically', dupEmail);
-check('duplicate mobile rejected atomically', dupMobile);
-check('failed creates left no partial user', (await db.collection(C.users).get()).size === 1);
+// Usernames are unique; email and mobile may be shared by several logins (one owner, several clients).
+const dirName = (await getUserById(dir))!.username!;
+check('every login gets a username, made from the email', dirName === 'asha');
+const twin = await createStaffLogin({ role: 'manager', name: 'X', email: 'asha@demo.test', mobile: '9000000001', password: 'another one 123' });
+check('the same email and mobile can be used by another login', !!twin.id && twin.username === 'asha2');
+let dupName = false;
+try { await createStaffUser({ role: 'manager', name: 'Y', email: 'new@demo.test', mobile: '9000000002', password: 'another one 123', username: 'asha' }); } catch (e) { dupName = e instanceof UniquenessError; }
+check('a taken username is refused atomically', dupName);
+check('the refused create left no partial user', (await db.collection(C.users).get()).size === 2);
+check('sign-in by a shared email asks for the username', await findUserByIdentifier('asha@demo.test').then(() => false, (e) => e instanceof SharedContactError));
+check('sign-in by username finds the right login', (await findUserByIdentifier('ASHA2 '))?.id === twin.id && (await findUserByIdentifier('asha'))?.id === dir);
+await db.collection(C.users).doc(twin.id).delete(); // the rest of this file expects one staff user
 check('failed creates left no Firebase account', !!(await createAccount('reuse', 'new@demo.test', 'Reuse', 'another one 123')));
 await updatePassword(dir, 'changed horse 99');
 check('changed password: new works, old does not', await checkPassword(asha, 'changed horse 99') && !(await checkPassword(asha, 'correct horse 99')));

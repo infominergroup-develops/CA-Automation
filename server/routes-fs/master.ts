@@ -182,7 +182,7 @@ masterRouter.get('/rights', director, h(async (_req, res) => {
   const [users, groups] = await Promise.all([query<UserDoc>(C.users), query<ClientGroupDoc>(C.clientGroups)]);
   const group = new Map(groups.map((g) => [g.id, g.name]));
   res.json(users.sort((a, b) => a.name.localeCompare(b.name)).map((u) => ({
-    id: u.id, name: u.name, role: u.role, status: u.status, email: u.email,
+    id: u.id, name: u.name, role: u.role, status: u.status, email: u.email, username: u.username ?? null,
     group_name: u.client_group_id ? group.get(u.client_group_id) ?? '' : null,
     rights: rightsOf(u), custom: u.role !== 'director' && !!u.rights,
   })));

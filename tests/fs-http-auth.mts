@@ -16,7 +16,7 @@ import { C } from '../server/firestore/types.ts';
 let pass = 0, fail = 0;
 const check = (name: string, cond: boolean, extra: unknown = '') => { cond ? pass++ : fail++; console.log(`${cond ? 'PASS' : 'FAIL'}  ${name}${cond ? '' : '  ' + JSON.stringify(extra)}`); };
 async function wipe(col: string) { const s = await db.collection(col).get(); await Promise.all(s.docs.map((d) => d.ref.delete())); }
-for (const c of [C.users, C.uniqueEmail, C.uniqueMobile, C.sessions, C.challenges, C.audit, C.counters, C.consents, C.settings, C.clientGroups]) await wipe(c);
+for (const c of [C.users, C.uniqueEmail, C.uniqueMobile, C.uniqueUsername, C.sessions, C.challenges, C.audit, C.counters, C.consents, C.settings, C.clientGroups]) await wipe(c);
 await ensureSettingDefaults();
 
 // Seed accounts

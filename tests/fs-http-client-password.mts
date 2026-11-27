@@ -332,6 +332,16 @@ try {
   check('...and gets the ones ticked for them', (await dir.put(`/api/users/${mgrId}/clients`, { company_ids: [quiet.data.companyId], all_clients: false })).status === 200 && await seesJoshi());
   check('a manager cannot change their own access', (await mgr.put(`/api/users/${mgrId}/clients`, { company_ids: [], all_clients: true })).status === 403);
   check('every client again', (await dir.put(`/api/users/${mgrId}/clients`, { company_ids: [], all_clients: true })).status === 200 && (await mgr.get(G)).status === 200 && await seesJoshi());
+  // Two clients may share an owner's email and mobile; each login has its own username.
+  const shared = await dir.post('/api/clients', { group_name: 'Mehta Retail', company: { legal_name: 'Mehta Retail LLP' },
+    contact: { name: 'Ravi Mehta', mobile: '9876543210', email: 'ravi@mehta.test', password: 'retail pass 2026', username: 'ravi.retail' } });
+  check('a second client can use the same email and mobile', shared.status === 201 && shared.data.username === 'ravi.retail', shared.data);
+  check('sign-in with the shared email asks for the username', (await browser().login('client', 'ravi@mehta.test', 'retail pass 2026')).status === 400);
+  const retail = browser();
+  check('each signs in with their username', (await retail.login('client', 'ravi.retail', 'retail pass 2026')).data.signedIn === true);
+  await retail.post('/api/privacy/consent', { purposes: ['service'], version: (await retail.get('/api/privacy/notice')).data.version });
+  check('...and sees only their own client', ((await retail.get('/api/companies')).data as any[]).map((c) => c.legal_name).join() === 'Mehta Retail LLP');
+  check('a taken username is refused', (await dir.post(`/api/clients/${shared.data.groupId}/users`, { name: 'Ravi 2', mobile: '9876543210', email: 'ravi@mehta.test', password: 'retail pass 2026', username: 'ravi.retail' })).status === 409);
   check('role and rights changes are audited', (await dir.get('/api/audit?action=user.role_changed')).data.length === 1 && (await dir.get('/api/audit?action=user.rights_set')).data.length >= 6);
 } catch (e) {
   fail++; console.error(e);
