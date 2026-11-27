@@ -306,6 +306,23 @@ try {
   check('clients never get folder delete', (await dir.get('/api/rights')).data.find((p: any) => p.id === userId).rights.deleteFolder === false
     && (await cli.post(`/api/companies/${companyId}/folders/delete`, { fy: '2026-27' })).status === 403);
   check('folder deletes are audited with each file', (await dir.get('/api/audit?action=folder.deleted')).data.length === 3);
+  // Files straight in a year: no document type needed; folders made there; moving into a new folder.
+  const plainUp = (name: string, extra: Record<string, string>) => { const f = new FormData(); f.append('fy', '2026-27'); for (const [k, v] of Object.entries(extra)) f.set(k, v);
+    f.append('files', new Blob([Buffer.from(`%PDF-1.4\n${name}\n%%EOF\n`)]), name); return dir.post(J, f); };
+  const loose = await plainUp('loose.pdf', {});
+  const looseMeta = await getDocumentMeta(loose.data[0].id);
+  check('a file can sit straight in the year', loose.status === 201 && looseMeta?.category_id === '' && /^Joshi Steels\/2026-27\/\d{4}-\d{2}-\d{2}_loose\.pdf\./.test(looseMeta!.blob_key), looseMeta?.blob_key);
+  check('a month needs a document type', (await plainUp('m.pdf', { month: '4' })).status === 400);
+  await plainUp('deed.pdf', { subfolder: 'Property' });
+  check('...and in folders made in the year', (await getDocumentMeta((await dir.get(J)).data.find((d: any) => d.original_name === 'deed.pdf').id))?.subfolder === 'Property');
+  const typed = await put('bank-statements', 'typed.pdf');
+  check('move into a new folder straight in the year', (await dir.post(`/api/documents/${typed.data[0].id}/move`, { fy: '2026-27', category_id: null, month: null, subfolder: 'Property/Old' })).status === 200
+    && await (async () => { const m = await getDocumentMeta(typed.data[0].id); return m?.category_id === '' && m.subfolder === 'Property/Old' && m.blob_key.startsWith('Joshi Steels/2026-27/Property/Old/'); })());
+  check('deleting a year\'s own folder leaves typed files alone', await (async () => {
+    await put('bank-statements', 'keep.pdf', { subfolder: 'Property' });
+    const r = await dir.post(JF, { fy: '2026-27', sub: 'Property' });
+    return r.data.deleted === 2 && (await left()) === 'keep.pdf,loose.pdf';
+  })());
   check('role and rights changes are audited', (await dir.get('/api/audit?action=user.role_changed')).data.length === 1 && (await dir.get('/api/audit?action=user.rights_set')).data.length >= 6);
 } catch (e) {
   fail++; console.error(e);

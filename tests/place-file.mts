@@ -15,9 +15,11 @@ const cases: [string, string, object?][] = [
   ['X/PF/Apr-26/a.pdf', '2026-27|payroll-and-pf-esi|4|'],
   ['X/roc/a.pdf', '2026-27|roc-mca||'],
   // The firm's own layout: year / type / month, with a type the portal does not have yet
-  ['Infominer data/2025-26/Bookkeeping/April/a.pdf', '2025-26||4|Bookkeeping new:Bookkeeping'],
+  ['Infominer data/2025-26/Bookkeeping/April/a.pdf', '2025-26|||Bookkeeping/April new:Bookkeeping'], // no type: the month is kept as a folder
   ['2025-26/Bookkeeping/a.pdf', '2025-26|||Bookkeeping new:Bookkeeping'],
-  ['Bookkeeping/May/a.pdf', '2026-27||5| new:Bookkeeping', { fy: '2026-27' }],          // inside an open year
+  ['Bookkeeping/May/a.pdf', '2026-27|||Bookkeeping/May new:Bookkeeping', { fy: '2026-27' }], // inside an open year
+  ['April/a.pdf', '2026-27|||April'],                       // a month with no type is just a folder
+  ['HDFC/April/a.pdf', '2026-27|||HDFC/April new:HDFC', { fy: '2026-27', category: '' }], // inside a year's own made folder
   ['2025-26/GST/April/a.pdf', '2025-26|gst-documents|4|'],                               // known type: nothing to create
   ['Scans/a.pdf', '2026-27|||Scans'],                                                     // no year: not guessed
   ['Marketing/a.pdf', '2026-27|||Marketing'],              // not March

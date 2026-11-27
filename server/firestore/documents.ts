@@ -14,6 +14,7 @@ const slug = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, '-').re
 
 export interface Category { id: string; name: string; sort: number; active: boolean }
 export interface DocumentDoc {
+  /** category_id '' = straight in the year, with no document type. */
   id: string; company_id: string; category_id: string; fy: string; month: number | null;
   original_name: string; mime: string; size: number; sha256: string;
   wrapped_key: string; iv: string; auth_tag: string;
@@ -80,8 +81,9 @@ const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 
 const monthFolder = (fy: string, month: number) => `${Number(fy.slice(0, 4)) + (month < 4 ? 1 : 0)}-${String(month).padStart(2, '0')} ${MONTHS[month - 1]}`;
 
 /** Client / financial year / document type / month, as readable folders in the bucket. Contents stay encrypted. */
+/** A file may also sit straight in the year (no document type, so no month either), alone or in folders people made. */
 export const docFolder = (client: string, fy: string, category: string, month?: number | null, subfolder = '') =>
-  [client, fy, category, ...(month ? [monthFolder(fy, month)] : []), ...subfolder.split('/').filter(Boolean)].map(segment).join('/');
+  [client, fy, ...(category ? [category, ...(month ? [monthFolder(fy, month)] : [])] : []), ...subfolder.split('/').filter(Boolean)].map(segment).join('/');
 
 /** Encrypts the file, stores the ciphertext, and records metadata. Returns the id, hash and any duplicate. */
 export async function createDocument(u: UploadInput): Promise<{ id: string; sha256: string; duplicateOf: { id: string; created_at: string } | null }> {

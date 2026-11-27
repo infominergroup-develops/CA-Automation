@@ -28,13 +28,13 @@ function readCategory(dir: string, cats: { id: string | number; name: string }[]
  * Files a picked file by the names of the folders it came in. The folder the user has open (`fixed`) always wins;
  * otherwise a recognised year, document type or month is used, and whatever is left is kept as inner folders.
  */
-export function placeFile(path: string, fixed: Partial<Place>, chosen: Omit<Place, 'sub'>, cats: { id: string | number; name: string }[]): Place {
+export function placeFile(path: string, fixed: Partial<Place>, chosen: Omit<Place, 'sub'>, cats: { id: string | number; name: string }[], noMonths = false): Place {
   const found: Partial<Place> = {};
   const rest: string[] = [];
   const dirs = path.split('/').slice(0, -1);
   let wrapper = false; // the top folder has a name that means nothing to us, such as the client's
   const kinds = dirs.map((dir) => {
-    const guesses = { fy: readFy(dir), month: readMonth(dir), category: readCategory(dir, cats) };
+    const guesses = { fy: readFy(dir), month: noMonths ? undefined : readMonth(dir), category: readCategory(dir, cats) };
     return { guesses, key: (['fy', 'month', 'category'] as const).find((k) => guesses[k]) };
   });
   dirs.forEach((dir, i) => {
@@ -49,5 +49,7 @@ export function placeFile(path: string, fixed: Partial<Place>, chosen: Omit<Plac
   const afterYear = kinds.findIndex((k) => k.key === 'fy');
   const candidate = fixed.category || found.category ? -1 : afterYear >= 0 ? afterYear + 1 : fixed.fy ? 0 : -1;
   const newFolder = candidate >= 0 && candidate < dirs.length && !kinds[candidate].key ? dirs[candidate] : undefined;
-  return { ...chosen, ...found, ...fixed, sub: rest.join('/'), ...(newFolder && { newFolder }) };
+  const place = { ...chosen, ...found, ...fixed, sub: rest.join('/'), ...(newFolder && { newFolder }) };
+  // A month sits inside a document type; with none, a month folder such as "April" is kept as a made folder.
+  return !place.category && found.month !== undefined ? placeFile(path, fixed, chosen, cats, true) : place;
 }

@@ -40,18 +40,28 @@ documentsRouter.get('/companies/:companyId/documents', requireRight('view'), h(a
   res.json(rows);
 }));
 
+/** The document type for a file, or none (straight in the year). A month needs a document type. */
+async function placeCategory(id: string, month?: number | null) {
+  if (!id) {
+    if (month) throw new HttpError(400, 'Choose a document type for a month.');
+    return undefined;
+  }
+  const category = (await listCategories()).find((c) => c.id === id);
+  if (!category) throw new HttpError(400, 'Unknown folder.');
+  return category;
+}
+
 documentsRouter.post('/companies/:companyId/documents', requireAuth, upload.array('files', 20), h(async (req, res) => {
   const companyId = String(req.params.companyId);
   const company = await assertCompany(req.user!, companyId);
   const b = parse(z.object({
-    category_id: zCategory,
+    category_id: z.string().trim().max(80).default(''), // '' = straight in the year
     fy: zFy,
     month: z.coerce.number().int().min(1).max(12).optional().or(z.literal('').transform(() => undefined)),
     subfolder: z.string().max(1000).default('').transform(cleanSubfolder),
   }), req.body);
-  const category = (await listCategories()).find((c) => c.id === b.category_id);
-  if (!category) throw new HttpError(400, 'Unknown category.');
-  const folder = docFolder(company.legal_name, b.fy, category.name, b.month, b.subfolder);
+  const category = await placeCategory(b.category_id, b.month);
+  const folder = docFolder(company.legal_name, b.fy, category?.name ?? '', b.month, b.subfolder);
   const files = (req.files as Express.Multer.File[] | undefined) ?? [];
   if (!files.length) throw new HttpError(400, 'Choose at least one file.');
 
@@ -114,7 +124,7 @@ documentsRouter.patch('/documents/:id/review', requireRight('edit'), h(async (re
 /** Staff with the move right (directors and managers by default) move a file to another year, folder or month; its inner folders go with it unless changed. */
 documentsRouter.post('/documents/:id/move', requireRight('move'), h(async (req, res) => {
   const b = parse(z.object({
-    category_id: zCategory,
+    category_id: z.string().trim().max(80).nullable().transform((c) => c ?? ''), // '' or null = straight in the year
     fy: zFy,
     month: z.number().int().min(1).max(12).nullable(),
     subfolder: z.string().max(1000).optional().transform((s) => (s === undefined ? undefined : cleanSubfolder(s))),
@@ -122,12 +132,12 @@ documentsRouter.post('/documents/:id/move', requireRight('move'), h(async (req, 
   const doc = await getDocumentMeta(String(req.params.id));
   if (!doc || !(await inScope(req.user!, doc.company_id))) throw new HttpError(404, 'Not found.');
   const company = await assertCompany(req.user!, doc.company_id);
-  const category = (await listCategories()).find((c) => c.id === b.category_id);
-  if (!category) throw new HttpError(400, 'Unknown folder.');
+  const category = await placeCategory(b.category_id, b.month);
   const subfolder = b.subfolder ?? doc.subfolder ?? '';
-  await moveDocument(doc, { fy: b.fy, categoryId: category.id, month: b.month, subfolder, folder: docFolder(company.legal_name, b.fy, category.name, b.month, subfolder) });
+  const categoryId = category?.id ?? '';
+  await moveDocument(doc, { fy: b.fy, categoryId, month: category ? b.month : null, subfolder, folder: docFolder(company.legal_name, b.fy, category?.name ?? '', b.month, subfolder) });
   await auditReq(req, { action: 'document.moved', objectType: 'document', objectId: doc.id, companyId: doc.company_id,
-    details: { from: { fy: doc.fy, category_id: doc.category_id, month: doc.month, subfolder: doc.subfolder ?? '' }, to: { fy: b.fy, category_id: category.id, month: b.month, subfolder } } });
+    details: { from: { fy: doc.fy, category_id: doc.category_id, month: doc.month, subfolder: doc.subfolder ?? '' }, to: { fy: b.fy, category_id: categoryId, month: b.month, subfolder } } });
   res.json({ ok: true });
 }));
 
@@ -159,9 +169,10 @@ documentsRouter.post('/companies/:companyId/folders/delete', requireRight('delet
     month: z.number().int().min(1).max(12).optional(),
     sub: z.string().max(1000).optional().transform((s) => (s ? cleanSubfolder(s) : '')),
   }), req.body);
-  if ((b.month || b.sub) && !b.category_id) throw new HttpError(400, 'Months and made folders sit inside a document type.');
-  // Same folders as the file manager shows: made folders inside a document type hold files of no month.
-  const inside = (await listDocuments(companyId)).filter((d) => d.fy === b.fy && (!b.category_id || d.category_id === b.category_id)
+  if (b.month && !b.category_id) throw new HttpError(400, 'Months sit inside a document type.');
+  // Same folders as the file manager shows: made folders inside a document type hold files of no month; made folders
+  // straight in the year hold files of no document type.
+  const inside = (await listDocuments(companyId)).filter((d) => d.fy === b.fy && (b.category_id ? d.category_id === b.category_id : !b.sub || !d.category_id)
     && (b.month ? d.month === b.month : !b.sub || !d.month)
     && (!b.sub || (d.subfolder ?? '') === b.sub || (d.subfolder ?? '').startsWith(`${b.sub}/`)));
   await Promise.all(inside.map((d) => softDeleteDocument(d.id, req.user!.id)));
