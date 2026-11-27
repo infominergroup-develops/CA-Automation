@@ -214,6 +214,46 @@ try {
   check('rename cannot clash', (await dir.put(`/api/designations/${senior.data.id}`, { name: 'Article Assistant' })).status === 409);
   check('removing a designation clears it from staff', (await dir.del(`/api/designations/${senior.data.id}`)).status === 200 && (await title(empId)) === null);
   check('master changes are audited', (await dir.get('/api/audit?action=client_set.')).data.length >= 3);
+
+  // Roles and file rights, set by the director per person.
+  const R = (view: boolean, edit: boolean, download: boolean, del: boolean) => ({ view, edit, download, delete: del });
+  const tdoc = theirs.data[0].id, dl = `/api/documents/${tdoc}/download`;
+  check('only the director sees and sets rights', (await mgr.get('/api/rights')).status === 403 && (await mgr.put(`/api/users/${empId}/rights`, { rights: R(true, true, true, true) })).status === 403);
+  const people = (await dir.get('/api/rights')).data as any[];
+  const directorId = people.find((p) => p.role === 'director').id;
+  check('rights start at the role defaults', people.find((p) => p.id === empId).rights.edit === false && people.find((p) => p.id === mgrId).rights.delete === false
+    && people.find((p) => p.id === userId).rights.delete === true && people.every((p) => !p.custom));
+  check('employee by default cannot move or delete', (await emp.post(`/api/documents/${tdoc}/move`, { category_id: 'others', fy: '2026-27', month: null })).status === 403 && (await emp.del(`/api/documents/${tdoc}`)).status === 403);
+  check('director lets the employee edit and delete', (await dir.put(`/api/users/${empId}/rights`, { rights: R(true, true, true, true) })).status === 200);
+  check('...the employee now moves a file', (await emp.post(`/api/documents/${tdoc}/move`, { category_id: 'others', fy: '2026-27', month: null })).status === 200);
+  check('...and asks for a re-upload', (await emp.patch(`/api/documents/${tdoc}/review`, { status: 'reupload', note: 'blurred copy' })).status === 200);
+  check('the app is told the rights', (await emp.get('/api/auth/me')).data.user.rights.delete === true);
+  check('download off: viewing works, downloading is refused', (await dir.put(`/api/users/${empId}/rights`, { rights: R(true, false, false, false) })).status === 200
+    && (await emp.get(dl)).status === 403 && (await emp.get(`${dl}?view=1`)).status === 200);
+  check('view off: the file list and viewer are refused', (await dir.put(`/api/users/${empId}/rights`, { rights: R(false, false, true, false) })).status === 200
+    && (await emp.get(G)).status === 403 && (await emp.get(`${dl}?view=1`)).status === 403);
+  check('...but uploading still works', (await emp.post(G, file('late.pdf', 'others', 'late'))).status === 201);
+  check('back to the role default', (await dir.put(`/api/users/${empId}/rights`, { rights: null })).status === 200
+    && !(await dir.get('/api/rights')).data.find((p: any) => p.id === empId).custom && (await emp.get(G)).status === 200);
+  check('directors always keep every right', (await dir.put(`/api/users/${directorId}/rights`, { rights: R(false, false, false, false) })).status === 400);
+  const cdoc = fromClient.data[0].id, cdl = `/api/documents/${cdoc}/download`;
+  await cli.login('client', '9876543210', 'newclient123'); // signed out when the director reset the password above
+  check('client download off: views but cannot download', (await dir.put(`/api/users/${userId}/rights`, { rights: R(true, false, false, true) })).status === 200
+    && (await cli.get(cdl)).status === 403 && (await cli.get(`${cdl}?view=1`)).status === 200);
+  check('client delete off: cannot remove even a fresh own upload', (await dir.put(`/api/users/${userId}/rights`, { rights: R(true, false, true, false) })).status === 200
+    && (await cli.del(`/api/documents/${cdoc}`)).status === 403);
+  check('clients never get edit', (await dir.put(`/api/users/${userId}/rights`, { rights: R(true, true, true, true) })).status === 200
+    && (await cli.patch(`/api/documents/${cdoc}/review`, { status: 'accepted' })).status === 403);
+  check('client with delete removes their own upload', (await cli.del(`/api/documents/${cdoc}`)).status === 200);
+  check('manager cannot change roles', (await mgr.put(`/api/users/${empId}/role`, { role: 'manager' })).status === 403);
+  check('director cannot change their own role', (await dir.put(`/api/users/${directorId}/role`, { role: 'employee' })).status === 400);
+  check('a client login is not made staff here', (await dir.put(`/api/users/${userId}/role`, { role: 'manager' })).status === 404);
+  await dir.put(`/api/users/${empId}/rights`, { rights: R(true, true, true, true) });
+  check('employee made a manager sees every client', (await dir.put(`/api/users/${empId}/role`, { role: 'manager' })).status === 200
+    && (await emp.get('/api/companies')).data.length === (await dir.get('/api/companies')).data.length);
+  const promoted = (await emp.get('/api/auth/me')).data.user;
+  check('...with the manager default rights', promoted.role === 'manager' && promoted.rights.delete === false && promoted.rights.edit === true);
+  check('role and rights changes are audited', (await dir.get('/api/audit?action=user.role_changed')).data.length === 1 && (await dir.get('/api/audit?action=user.rights_set')).data.length >= 6);
 } catch (e) {
   fail++; console.error(e);
 } finally {

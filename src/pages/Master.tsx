@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { FolderPlus, Pencil, Plus, Search, Trash2, Users, X } from 'lucide-react';
 import { api } from '../api';
+import { useUser, type Rights } from '../auth';
 import {
   Badge, Button, Card, Chip, EmptyState, ErrorText, Field, Input, LoadingRows, PageHeader, Select, Table, Tabs, Td, useConfirm, useLoad, useToast,
 } from '../components/ui';
@@ -12,10 +13,10 @@ interface ClientSet { id: string; name: string; company_ids: string[]; member_id
 interface Staff { id: string; name: string; role: string; status: string; client_ids?: string[]; designation_id?: string | null }
 interface Designation { id: string; name: string }
 
-/** Director's masters: what work we do for each client, which staff see which clients, and staff designations. */
+/** Director's masters: what work we do for each client, which staff see which clients, staff designations, and roles and file rights. */
 export function ClientMaster() {
   const [params, setParams] = useSearchParams();
-  const tab = (params.get('tab') ?? 'work') as 'work' | 'groups' | 'staff' | 'titles';
+  const tab = (params.get('tab') ?? 'work') as 'work' | 'groups' | 'staff' | 'titles' | 'rights';
   const [clients, e1, reloadClients] = useLoad(() => api<Client[]>('/companies'));
   const [types, e2, reloadTypes] = useLoad(() => api<WorkType[]>('/work-types'));
   const [sets, e3, reloadSets] = useLoad(() => api<ClientSet[]>('/client-sets'));
@@ -32,12 +33,14 @@ export function ClientMaster() {
         { value: 'groups', label: 'Client groups', count: sets?.length },
         { value: 'staff', label: 'Employee access' },
         { value: 'titles', label: 'Designations', count: titles?.length },
+        { value: 'rights', label: 'Roles & rights' },
       ]} />
       {!ready ? <LoadingRows rows={6} />
         : tab === 'work' ? <WorkTypes clients={clients} types={types} onChange={() => { reloadClients(); reloadTypes(); }} />
           : tab === 'groups' ? <Groups clients={clients} sets={sets} team={team} onChange={reloadSets} />
             : tab === 'staff' ? <EmployeeAccess clients={clients} sets={sets} staff={staff.filter((s) => s.role === 'employee' && s.status === 'active')} onChange={reloadStaff} />
-              : <Designations titles={titles} staff={staff.filter((s) => s.status === 'active')} onChange={() => { reloadTitles(); reloadStaff(); }} />}
+              : tab === 'titles' ? <Designations titles={titles} staff={staff.filter((s) => s.status === 'active')} onChange={() => { reloadTitles(); reloadStaff(); }} />
+                : <RolesAndRights onChange={reloadStaff} />}
     </>
   );
 }
@@ -317,6 +320,105 @@ function Designations({ titles, staff, onChange }: { titles: Designation[]; staf
             </tr>
           ))}
         </Table>
+      </Card>
+    </div>
+  );
+}
+
+interface Person { id: string; name: string; role: string; status: string; email: string | null; group_name: string | null; rights: Rights; custom: boolean }
+const RIGHT_LABEL: Record<keyof Rights, string> = { view: 'View', edit: 'Edit', download: 'Download', delete: 'Delete' };
+const title = (role: string) => role[0].toUpperCase() + role.slice(1);
+
+/** The director changes staff roles and ticks what each person, staff or client, may do with files. */
+function RolesAndRights({ onChange }: { onChange: () => void }) {
+  const me = useUser();
+  const toast = useToast();
+  const confirm = useConfirm();
+  const [people, loadErr, reload] = useLoad(() => api<Person[]>('/rights'));
+  const [q, setQ] = useState('');
+  const [err, setErr] = useState<unknown>();
+  // Ticks show at once and saves go one after another, so quick clicks never undo one another.
+  const [ticked, setTicked] = useState<Record<string, Rights>>({});
+  const latest = useRef<Record<string, Rights>>({});
+  const saving = useRef<Promise<unknown>>(Promise.resolve());
+  const forget = (id?: string) => {
+    latest.current = id ? Object.fromEntries(Object.entries(latest.current).filter(([k]) => k !== id)) : {};
+    setTicked(latest.current);
+  };
+  const save = (fn: () => Promise<unknown>, ok?: string) => {
+    saving.current = saving.current.then(async () => {
+      setErr(undefined);
+      try { await fn(); if (ok) toast(ok); } catch (e) { setErr(e); forget(); }
+      reload();
+    });
+  };
+  const rightsNow = (p: Person) => ticked[p.id] ?? p.rights;
+  const toggle = (p: Person, r: keyof Rights) => {
+    const next = { ...(latest.current[p.id] ?? p.rights), [r]: !(latest.current[p.id] ?? p.rights)[r] };
+    latest.current = { ...latest.current, [p.id]: next };
+    setTicked(latest.current);
+    save(() => api(`/users/${p.id}/rights`, { method: 'PUT', body: { rights: next } }));
+  };
+  const reset = (p: Person) => { forget(p.id); save(() => api(`/users/${p.id}/rights`, { method: 'PUT', body: { rights: null } }), `${p.name} is back to the ${p.role} default`); };
+  const setRole = async (p: Person, role: string) => {
+    if (await confirm({ title: `Make ${p.name} a ${role}?`, body: `Their file rights go back to the ${role} default. ${role === 'director' ? 'A director can do everything, including deleting files and changing other people\u2019s roles.' : ''}`, confirmLabel: `Make ${role}` })) {
+      forget(p.id);
+      save(async () => { await api(`/users/${p.id}/role`, { method: 'PUT', body: { role } }); onChange(); }, `${p.name} is now a ${role}`);
+    }
+  };
+  if (!people) return loadErr ? <ErrorText error={loadErr} /> : <LoadingRows rows={6} />;
+  const active = people.filter((p) => p.status === 'active');
+  const staff = active.filter((p) => p.role !== 'client');
+  const clients = active.filter((p) => p.role === 'client' && `${p.name} ${p.group_name} ${p.email}`.toLowerCase().includes(q.toLowerCase()));
+  const box = (p: Person, r: keyof Rights, locked = false) => (
+    <Td key={r} className="text-center">
+      <input type="checkbox" className="size-4 accent-brand-500 disabled:opacity-40" aria-label={`${RIGHT_LABEL[r]} for ${p.name}`}
+        checked={rightsNow(p)[r]} disabled={locked} onChange={() => toggle(p, r)} />
+    </Td>
+  );
+  const resetCell = (p: Person) => (
+    <Td className="text-right whitespace-nowrap">{p.custom && <Button size="sm" variant="ghost" onClick={() => reset(p)}>Back to default</Button>}</Td>
+  );
+  return (
+    <div className="space-y-6">
+      <ErrorText error={err} />
+      <Card title="Staff" padded={false}
+        description="Change someone's role, and tick what they may do with client files. View = open files in the portal; Edit = move files, accept them or ask for re-upload, add folders; Download = save a copy; Delete = remove a file. Directors always have every right.">
+        <Table head={['Name', 'Role', 'View', 'Edit', 'Download', 'Delete', '']}>
+          {staff.map((p) => (
+            <tr key={p.id}>
+              <Td><div className="font-semibold text-ink">{p.name}{p.id === me.id && <span className="text-xs font-normal text-slate-400"> (you)</span>}</div><div className="text-xs text-slate-500">{p.email}</div></Td>
+              <Td>
+                <Select value={p.role} disabled={p.id === me.id} onChange={(e) => setRole(p, e.target.value)} aria-label={`Role for ${p.name}`} className="w-36">
+                  {['director', 'manager', 'employee'].map((r) => <option key={r} value={r}>{title(r)}</option>)}
+                </Select>
+              </Td>
+              {(['view', 'edit', 'download', 'delete'] as const).map((r) => box(p, r, p.role === 'director'))}
+              {resetCell(p)}
+            </tr>
+          ))}
+        </Table>
+      </Card>
+      <Card title="Client logins" padded={false}
+        description="What each client login may do with their own company's files. Delete lets them remove files they uploaded themselves, within 24 hours."
+        actions={
+          <div className="relative">
+            <Search className="size-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" aria-hidden />
+            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search clients" aria-label="Search client logins" className="pl-9 w-56! h-9!" />
+          </div>
+        }>
+        {!clients.length ? <EmptyState icon={Users} title={q ? 'Nothing matches' : 'No client logins yet'} /> : (
+          <Table head={['Name', 'Client', 'View', 'Download', 'Delete own uploads', '']}>
+            {clients.map((p) => (
+              <tr key={p.id}>
+                <Td><div className="font-semibold text-ink">{p.name}</div><div className="text-xs text-slate-500">{p.email}</div></Td>
+                <Td className="text-slate-600">{p.group_name}</Td>
+                {(['view', 'download', 'delete'] as const).map((r) => box(p, r))}
+                {resetCell(p)}
+              </tr>
+            ))}
+          </Table>
+        )}
       </Card>
     </div>
   );

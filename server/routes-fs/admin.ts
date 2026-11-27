@@ -5,7 +5,7 @@ import { zEmail, zGstin, zId, zMobile, zPan, zText } from '../shared.ts';
 import { passwordProblem } from '../security/crypto.ts';
 import { assertCompany, companyScope, userNames } from '../firestore/authz.ts';
 import { db } from '../firestore/client.ts';
-import { HttpError, auditReq, h, parse, requireAuth, requireRole, type SessionUser } from '../firestore/http.ts';
+import { HttpError, auditReq, h, parse, requireAuth, requireRight, requireRole, type SessionUser } from '../firestore/http.ts';
 import { endAllSessions } from '../firestore/sessions.ts';
 import { getSettings, setSetting } from '../firestore/settings.ts';
 import { getById, newId, now, query } from '../firestore/store.ts';
@@ -250,7 +250,7 @@ adminRouter.get('/companies/:id', requireRole('director', 'manager'), h(async (r
 }));
 
 /** A new document folder for every client, such as Bookkeeping. */
-adminRouter.post('/categories', requireRole('director', 'manager'), h(async (req, res) => {
+adminRouter.post('/categories', requireRight('edit'), h(async (req, res) => {
   const { name } = parse(z.object({ name: zText(60).min(2) }), req.body);
   const cat = await addCategory(name).catch((e) => { throw e instanceof FolderExistsError ? new HttpError(409, e.message) : e; });
   await auditReq(req, { action: 'category.created', objectType: 'category', objectId: cat.id, details: { name } });

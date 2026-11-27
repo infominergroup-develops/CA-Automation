@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import { api, currentFy, download, fetchBlob, fmtDateTime, fmtSize, fyOptions } from '../api';
 import { parseCsv } from '../csv';
-import { useUser } from '../auth';
+import { useRights, useUser } from '../auth';
 import { placeFile, type Place } from '../placeFile';
 import { Button, Card, EmptyState, ErrorText, Field, IconButton, Input, LoadingRows, Modal, Select, StatusBadge, useConfirm, useLoad, useToast } from './ui';
 
@@ -36,6 +36,7 @@ function FileIcon({ mime, name }: { mime: string; name?: string }) {
 /** Documents as folders: financial year, then document type, then month. The open folder is kept in the address, so Back works. */
 export function DocumentsPanel({ companyId, canUpload = true }: { companyId: string; canUpload?: boolean }) {
   const u = useUser();
+  const can = useRights(); // what the director lets this person do with files
   const toast = useToast();
   const confirm = useConfirm();
   const [cats, , reloadCats] = useLoad(() => api<Category[]>('/categories'));
@@ -46,8 +47,9 @@ export function DocumentsPanel({ companyId, canUpload = true }: { companyId: str
   const [viewing, setViewing] = useState<number | null>(null);
   const fy = params.get('fy') ?? '', folder = params.get('folder') ?? '', month = params.get('month') ?? '';
   const [q, setQ] = useState('');
-  const [docs, loadErr, reload, loading] = useLoad(() => api<Doc[]>(`/companies/${companyId}/documents`), [companyId]);
-  const managerial = u.role === 'director' || u.role === 'manager';
+  const [docs, loadErr, reload, loading] = useLoad(() => (can.view ? api<Doc[]>(`/companies/${companyId}/documents`) : Promise.resolve([])), [companyId, can.view]);
+  // Move, accept, ask for re-upload, add folders: the edit right (directors and managers unless changed).
+  const managerial = can.edit && u.role !== 'client';
 
   const open = (to: { fy?: string; folder?: string; month?: string }) => {
     const next = new URLSearchParams(params);
@@ -71,7 +73,7 @@ export function DocumentsPanel({ companyId, canUpload = true }: { companyId: str
     if (r) attempt(() => api(`/documents/${d.id}`, { method: 'DELETE' }), 'Document deleted');
   };
   const get = (d: Doc) => attempt(() => download(`/documents/${d.id}/download`, d.original_name));
-  const canDelete = (d: Doc) => u.role === 'director' || (!!d.mine && Date.parse(d.created_at) > Date.now() - 86400e3);
+  const canDelete = (d: Doc) => can.delete && (u.role !== 'client' || (!!d.mine && Date.parse(d.created_at) > Date.now() - 86400e3));
 
   const here = (docs ?? []).filter((d) => (!fy || d.fy === fy) && (!folder || String(d.category_id) === folder) && (!month || String(d.month ?? '') === month));
   const catName = cats?.find((c) => String(c.id) === folder)?.name ?? folder;
@@ -95,7 +97,12 @@ export function DocumentsPanel({ companyId, canUpload = true }: { companyId: str
     <div className="space-y-6">
       {canUpload && <UploadZone key={`${fy}|${folder}|${month}`} companyId={companyId} cats={cats ?? []} at={{ fy, folder, month }} onDone={reload} onNewFolder={managerial ? reloadCats : undefined} />}
 
-      <Card title="Documents" description={u.role === 'employee' ? 'All files of clients you added or have an open task for. You can upload and download, not delete or move.' : `${docs?.length ?? '–'} files`} padded={false}
+      {!can.view ? (
+        <Card title="Documents">
+          <EmptyState icon={FolderOpen} title="Viewing files is turned off for you">{canUpload ? 'You can still upload files above. ' : ''}Ask a director if you need to see them.</EmptyState>
+        </Card>
+      ) : (
+      <Card title="Documents" description={u.role === 'employee' ? `All files of clients you work on. You can ${sayList(['upload', 'view', can.download && 'download', can.edit && 'move', can.delete && 'delete'])} them.` : `${docs?.length ?? '–'} files`} padded={false}
         actions={
           <div className="relative">
             <Search className="size-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" aria-hidden />
@@ -180,7 +187,7 @@ export function DocumentsPanel({ companyId, canUpload = true }: { companyId: str
                       <StatusBadge status={d.review_status} />
                       <div className="flex">
                         <IconButton label={`View ${d.original_name}`} icon={Eye} onClick={() => setViewing(files.indexOf(d))} />
-                        <IconButton label={`Download ${d.original_name}`} icon={Download} onClick={() => get(d)} />
+                        {can.download && <IconButton label={`Download ${d.original_name}`} icon={Download} onClick={() => get(d)} />}
                         {managerial && d.review_status !== 'accepted' && <IconButton label="Accept" icon={Check} tone="success" onClick={() => accept(d)} />}
                         {managerial && d.review_status !== 'reupload' && <IconButton label="Ask for re-upload" icon={RotateCcw} tone="danger" onClick={() => askReupload(d)} />}
                         {canDelete(d) && <IconButton label="Delete" icon={Trash2} onClick={() => remove(d)} />}
@@ -193,8 +200,9 @@ export function DocumentsPanel({ companyId, canUpload = true }: { companyId: str
           </>
         )}
       </Card>
+      )}
       {viewing !== null && files[viewing] && (
-        <FileViewer docs={files} index={viewing} onIndex={setViewing} onClose={() => setViewing(null)} onDownload={get} />
+        <FileViewer docs={files} index={viewing} onIndex={setViewing} onClose={() => setViewing(null)} onDownload={can.download ? get : undefined} />
       )}
       {naming && <NewFolder onClose={() => setNaming(false)} onDone={(c) => { setNaming(false); reloadCats(); open({ fy, folder: String(c.id) }); }} />}
       {moving && cats && (
@@ -424,6 +432,9 @@ function UploadZone({ companyId, cats, at, onDone, onNewFolder }: { companyId: s
   );
 }
 
+/** "upload, view and delete" from a list with gaps. */
+const sayList = (items: (string | false)[]) => { const w = items.filter(Boolean) as string[]; return w.length > 1 ? `${w.slice(0, -1).join(', ')} and ${w.at(-1)}` : w[0] ?? ''; };
+
 /** What the viewer can show inside the portal; other files are offered as a download. */
 // Phones whose browser has no built-in PDF viewer (Chrome on Android) would show an empty box, so they get the download.
 const viewKind = (mime: string) =>
@@ -454,7 +465,7 @@ table{border-collapse:collapse}td,th{border:1px solid #cbd5e1;padding:4px 8px}im
 }
 
 /** Shows a file inside the portal, with previous/next through the files listed. Each opening is recorded as a view. */
-function FileViewer({ docs, index, onIndex, onClose, onDownload }: { docs: Doc[]; index: number; onIndex: (i: number) => void; onClose: () => void; onDownload: (d: Doc) => void }) {
+function FileViewer({ docs, index, onIndex, onClose, onDownload }: { docs: Doc[]; index: number; onIndex: (i: number) => void; onClose: () => void; onDownload?: (d: Doc) => void }) {
   const d = docs[index];
   const kind = viewKind(d.mime);
   const [shown, setShown] = useState<{ id: string; url?: string; text?: string; html?: string; sheets?: { name: string; rows: string[][] }[]; error?: string }>();
@@ -490,7 +501,7 @@ function FileViewer({ docs, index, onIndex, onClose, onDownload }: { docs: Doc[]
           <span className="mr-auto self-center text-xs text-slate-500">{index + 1} of {docs.length} · use the arrow keys</span>
           <Button variant="secondary" icon={ChevronLeft} disabled={index === 0} onClick={() => onIndex(index - 1)}>Previous</Button>
           <Button variant="secondary" disabled={index === docs.length - 1} onClick={() => onIndex(index + 1)}>Next<ChevronRight className="size-4" aria-hidden /></Button>
-          <Button icon={Download} onClick={() => onDownload(d)}>Download</Button>
+          {onDownload && <Button icon={Download} onClick={() => onDownload(d)}>Download</Button>}
         </>
       }>
       {!kind ? (

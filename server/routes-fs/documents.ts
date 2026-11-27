@@ -7,7 +7,7 @@ import { assertCompany, canViewDocument, inScope, userNames } from '../firestore
 import {
   IntegrityError, cleanSubfolder, createDocument, docFolder, moveDocument, getDocumentMeta, listCategories, listDocuments, readDocument, reviewDocument, softDeleteDocument,
 } from '../firestore/documents.ts';
-import { HttpError, auditReq, h, parse, requireAuth, requireRole } from '../firestore/http.ts';
+import { HttpError, auditReq, can, h, noRight, parse, requireAuth, requireRight } from '../firestore/http.ts';
 
 export const documentsRouter = Router();
 
@@ -18,7 +18,7 @@ const upload = multer({
 
 const zCategory = z.string().trim().min(1).max(80);
 
-documentsRouter.get('/companies/:companyId/documents', requireAuth, h(async (req, res) => {
+documentsRouter.get('/companies/:companyId/documents', requireRight('view'), h(async (req, res) => {
   const companyId = String(req.params.companyId);
   await assertCompany(req.user!, companyId);
   const q = parse(z.object({ category_id: zCategory.optional(), fy: zFy.optional() }), req.query);
@@ -79,6 +79,7 @@ documentsRouter.get('/documents/:id/download', requireAuth, h(async (req, res) =
   if (!doc || !(await canViewDocument(req.user!, doc))) throw new HttpError(404, 'Not found.');
   // ?view=1: opened in the portal's viewer rather than saved; recorded as a view.
   const view = req.query.view === '1';
+  if (!can(req.user!, view ? 'view' : 'download')) throw noRight(view ? 'view' : 'download');
   let file: Awaited<ReturnType<typeof readDocument>>;
   try {
     // Authenticity check inside: the decrypted bytes must match the hash recorded at upload.
@@ -97,7 +98,7 @@ documentsRouter.get('/documents/:id/download', requireAuth, h(async (req, res) =
   res.end(file.bytes);
 }));
 
-documentsRouter.patch('/documents/:id/review', requireRole('director', 'manager'), h(async (req, res) => {
+documentsRouter.patch('/documents/:id/review', requireRight('edit'), h(async (req, res) => {
   const b = parse(z.object({
     status: z.enum(['pending', 'accepted', 'reupload', 'not_needed']),
     note: zText(500).optional(),
@@ -110,8 +111,8 @@ documentsRouter.patch('/documents/:id/review', requireRole('director', 'manager'
   res.json({ ok: true });
 }));
 
-/** Directors and managers move a file to another year, folder or month; its inner folders go with it unless changed. */
-documentsRouter.post('/documents/:id/move', requireRole('director', 'manager'), h(async (req, res) => {
+/** Staff with the edit right (directors and managers by default) move a file to another year, folder or month; its inner folders go with it unless changed. */
+documentsRouter.post('/documents/:id/move', requireRight('edit'), h(async (req, res) => {
   const b = parse(z.object({
     category_id: zCategory,
     fy: zFy,
@@ -130,13 +131,16 @@ documentsRouter.post('/documents/:id/move', requireRole('director', 'manager'), 
   res.json({ ok: true });
 }));
 
-/** Soft delete. Directors any time; clients only their own uploads within 24 hours. The encrypted file is kept for retention. */
-documentsRouter.delete('/documents/:id', requireAuth, h(async (req, res) => {
+/**
+ * Soft delete, for people with the delete right: staff any file they can see (only directors by default); clients
+ * only their own uploads within 24 hours. The encrypted file is kept for retention.
+ */
+documentsRouter.delete('/documents/:id', requireRight('delete'), h(async (req, res) => {
   const doc = await getDocumentMeta(String(req.params.id));
   if (!doc || !(await inScope(req.user!, doc.company_id))) throw new HttpError(404, 'Not found.');
   const u = req.user!;
-  const clientOwn = u.role === 'client' && doc.uploaded_by === u.id && Date.parse(doc.created_at) > Date.now() - 24 * 3600e3;
-  if (u.role !== 'director' && !clientOwn) throw new HttpError(403, 'You cannot delete this document.');
+  const clientOwn = doc.uploaded_by === u.id && Date.parse(doc.created_at) > Date.now() - 24 * 3600e3;
+  if (u.role === 'client' && !clientOwn) throw noRight('delete');
   await softDeleteDocument(doc.id, u.id);
   await auditReq(req, { action: 'document.deleted', objectType: 'document', objectId: doc.id, companyId: doc.company_id });
   res.json({ ok: true });

@@ -4,7 +4,8 @@ import { zId, zText } from '../shared.ts';
 import { db } from '../firestore/client.ts';
 import { HttpError, auditReq, h, parse, requireRole } from '../firestore/http.ts';
 import { FieldValue, newId, now, query } from '../firestore/store.ts';
-import { C, type ClientSetDoc, type CompanyDoc, type DesignationDoc, type UserDoc, type WorkTypeDoc } from '../firestore/types.ts';
+import { C, type ClientGroupDoc, type ClientSetDoc, type CompanyDoc, type DesignationDoc, type UserDoc, type WorkTypeDoc } from '../firestore/types.ts';
+import { RIGHTS, ROLE_RIGHTS, rightsOf } from '../firestore/rights.ts';
 
 /** The client master: work types per client, named client groups given to staff, and clients ticked per employee. */
 export const masterRouter = Router();
@@ -170,5 +171,45 @@ masterRouter.put('/users/:id/designation', director, h(async (req, res) => {
   if (designation_id && !(await db.collection(C.designations).doc(designation_id).get()).exists) throw new HttpError(400, 'Unknown designation.');
   await ref.update({ designation_id, updated_at: now() });
   await auditReq(req, { action: 'user.designation_set', objectType: 'user', objectId: ref.id, details: { from: u.designation_id ?? null, to: designation_id } });
+  res.json({ ok: true });
+}));
+
+/* ---------- Roles and file rights ---------- */
+
+/** Everyone who signs in, with their role and file rights (custom = the director changed them from the role's default). */
+masterRouter.get('/rights', director, h(async (_req, res) => {
+  const [users, groups] = await Promise.all([query<UserDoc>(C.users), query<ClientGroupDoc>(C.clientGroups)]);
+  const group = new Map(groups.map((g) => [g.id, g.name]));
+  res.json(users.sort((a, b) => a.name.localeCompare(b.name)).map((u) => ({
+    id: u.id, name: u.name, role: u.role, status: u.status, email: u.email,
+    group_name: u.client_group_id ? group.get(u.client_group_id) ?? '' : null,
+    rights: rightsOf(u), custom: u.role !== 'director' && !!u.rights,
+  })));
+}));
+
+/** Sets a person's file rights, or `null` to go back to their role's default. Directors always keep every right. */
+masterRouter.put('/users/:id/rights', director, h(async (req, res) => {
+  const rights = parse(z.object({ rights: z.object(Object.fromEntries(RIGHTS.map((r) => [r, z.boolean()])) as Record<(typeof RIGHTS)[number], z.ZodBoolean>).nullable() }), req.body).rights;
+  const ref = db.collection(C.users).doc(String(req.params.id));
+  const u = (await ref.get()).data() as UserDoc | undefined;
+  if (!u) throw new HttpError(404, 'Not found.');
+  if (u.role === 'director') throw new HttpError(400, 'Directors always have every right.');
+  // The role's default is stored as "no custom rights", so a later change to the defaults reaches them.
+  const same = rights && RIGHTS.every((r) => rights[r] === ROLE_RIGHTS[u.role][r] || (u.role === 'client' && r === 'edit'));
+  await ref.update({ rights: same ? null : rights, updated_at: now() });
+  await auditReq(req, { action: 'user.rights_set', objectType: 'user', objectId: ref.id, details: { rights: same ? 'role default' : rights } });
+  res.json({ ok: true, rights: rightsOf({ role: u.role, rights: same ? null : rights }) });
+}));
+
+/** Changes a staff member's role. Their file rights go back to the new role's default. */
+masterRouter.put('/users/:id/role', director, h(async (req, res) => {
+  const { role } = parse(z.object({ role: z.enum(['director', 'manager', 'employee']) }), req.body);
+  const ref = db.collection(C.users).doc(String(req.params.id));
+  const u = (await ref.get()).data() as UserDoc | undefined;
+  if (!u || u.role === 'client') throw new HttpError(404, 'Not found.'); // a client login is not made staff here
+  if (u.id === req.user!.id) throw new HttpError(400, 'You cannot change your own role.'); // so there is always a director
+  if (u.role === role) return res.json({ ok: true });
+  await ref.update({ role, rights: null, updated_at: now() });
+  await auditReq(req, { action: 'user.role_changed', objectType: 'user', objectId: ref.id, details: { from: u.role, to: role } });
   res.json({ ok: true });
 }));

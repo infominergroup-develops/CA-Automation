@@ -69,6 +69,8 @@ export interface UserDoc {
   /** Employees: clients the director ticked for them in the client master. */
   client_ids?: string[];
   designation_id?: string | null;
+  /** File rights the director set for this person; absent = the role's defaults (see rights.ts). */
+  rights?: Partial<Record<'view' | 'edit' | 'download' | 'delete', boolean>> | null;
 }
 
 export interface SessionDoc {

@@ -5,6 +5,7 @@ import { audit, type AuditEntry } from './audit.ts';
 import { hasCurrentConsent } from './consents.ts';
 import { destroySession, loadValidSession, touchSession } from './sessions.ts';
 import { getUserById } from './users.ts';
+import { rightsOf, type Right, type Rights } from './rights.ts';
 import type { Role, UserDoc } from './types.ts';
 
 /**
@@ -18,7 +19,7 @@ export class HttpError extends Error {
 
 export interface SessionUser {
   id: string; role: Role; name: string; email: string | null; mobile: string | null;
-  client_group_id: string | null; monitoring_notice_ack_at: string | null;
+  client_group_id: string | null; monitoring_notice_ack_at: string | null; rights?: Rights;
 }
 // Reuses the project-wide Express.Request augmentation (req.user / req.sessionHash) declared by the SQLite
 // session module; we only ever set these at runtime here, never import that module.
@@ -36,7 +37,7 @@ export function clearSessionCookie(res: Response) {
 
 const toSessionUser = (u: UserDoc): SessionUser => ({
   id: u.id, role: u.role, name: u.name, email: u.email, mobile: u.mobile,
-  client_group_id: u.client_group_id, monitoring_notice_ack_at: u.monitoring_notice_ack_at,
+  client_group_id: u.client_group_id, monitoring_notice_ack_at: u.monitoring_notice_ack_at, rights: rightsOf(u),
 });
 
 /** Attaches req.user when a valid, unexpired session cookie is present. */
@@ -76,6 +77,22 @@ export const requireRole = (...roles: Role[]) => (req: Request, _res: Response, 
   if (!roles.includes(req.user.role)) return next(new HttpError(403, 'You do not have access to this.', 'forbidden'));
   next();
 };
+
+const NO_RIGHT: Record<Right, string> = {
+  view: 'Viewing files is turned off for you. Ask a director.',
+  edit: 'Changing files is turned off for you. Ask a director.',
+  download: 'Downloading files is turned off for you. Ask a director.',
+  delete: 'You cannot delete this document.',
+};
+
+/** Requires one of the person's file rights (set by the director in Masters, or their role's default). */
+export const requireRight = (r: Right) => (req: Request, _res: Response, next: NextFunction) => {
+  if (!req.user) return next(new HttpError(401, 'Please sign in.', 'unauthenticated'));
+  if (!can(req.user, r)) return next(new HttpError(403, NO_RIGHT[r], 'forbidden'));
+  next();
+};
+export const can = (u: SessionUser, r: Right) => (u.rights ?? rightsOf(u))[r];
+export const noRight = (r: Right) => new HttpError(403, NO_RIGHT[r], 'forbidden');
 
 /** Clients must accept the current privacy notice before their data is processed (DPDP s.5–6). */
 export async function requireConsent(req: Request, _res: Response, next: NextFunction) {
