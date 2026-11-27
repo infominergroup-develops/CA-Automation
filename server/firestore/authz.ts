@@ -21,8 +21,23 @@ export function companyScope(u: SessionUser): Promise<string[] | null> {
 async function computeScope(u: SessionUser): Promise<string[] | null> {
   switch (u.role) {
     case 'director':
-    case 'manager': // managers see every client too; approving and deleting stay with the task's reviewer and directors
       return null;
+    case 'manager': {
+      // Every client, unless the director limited this manager in the client master. Then: ticked clients, groups,
+      // clients they manage or added, and clients of their open tasks (as reviewer, creator or assignee).
+      const me = await getById<UserDoc>(C.users, u.id);
+      if (me?.all_clients !== false) return null;
+      const [managed, added, sets, ...taskLists] = await Promise.all([
+        query<CompanyDoc>(C.companies, { where: [['manager_id', '==', u.id]] }),
+        query<CompanyDoc>(C.companies, { where: [['created_by', '==', u.id]] }),
+        query<ClientSetDoc>(C.clientSets, { where: [['member_ids', 'array-contains', u.id]] }),
+        ...(['reviewer_id', 'created_by', 'assignee_id'] as const).map((f) => query<TaskDoc>(C.tasks, { where: [[f, '==', u.id]] })),
+      ]);
+      return [...new Set([
+        ...(me.client_ids ?? []), ...managed.map((c) => c.id), ...added.map((c) => c.id), ...sets.flatMap((s) => s.company_ids),
+        ...taskLists.flat().filter((t) => OPEN_STATUSES.includes(t.status)).map((t) => t.company_id),
+      ])];
+    }
     case 'employee': {
       // Open tasks and clients they added, plus what the director gave them in the client master: ticks and groups.
       const [tasks, added, me, sets] = await Promise.all([

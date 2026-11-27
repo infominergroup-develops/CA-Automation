@@ -201,7 +201,7 @@ try {
   check('removed from the group: access ends', (await dir.put(`/api/client-sets/${set.data.id}`, { member_ids: [] })).status === 200 && (await emp2.get(mehtaDocs)).status === 404);
   check('director ticks a client for an employee', (await dir.put(`/api/users/${vivek}/clients`, { company_ids: [companyId] })).status === 200 && (await emp2.get(mehtaDocs)).status === 200);
   check('director sees the ticks', (await dir.get('/api/users')).data.find((u: any) => u.id === vivek).client_ids.join() === companyId);
-  check('ticks only for employees', (await dir.put(`/api/users/${mgrId}/clients`, { company_ids: [] })).status === 404);
+  check('ticks only for employees and managers', (await dir.put(`/api/users/${userId}/clients`, { company_ids: [] })).status === 404);
   check('unticked: access ends', (await dir.put(`/api/users/${vivek}/clients`, { company_ids: [] })).status === 200 && (await emp2.get(mehtaDocs)).status === 404);
   check('deleting a group', (await dir.del(`/api/client-sets/${set.data.id}`)).status === 200 && (await dir.get('/api/client-sets')).data.length === 0);
 
@@ -323,6 +323,15 @@ try {
     const r = await dir.post(JF, { fy: '2026-27', sub: 'Property' });
     return r.data.deleted === 2 && (await left()) === 'keep.pdf,loose.pdf';
   })());
+  // Managers see every client until the director limits them in Client access.
+  const seesJoshi = async () => ((await mgr.get('/api/companies')).data as any[]).some((c) => c.id === quiet.data.companyId);
+  check('a manager sees every client by default', await seesJoshi() && (await dir.get('/api/users')).data.find((x: any) => x.id === mgrId).all_clients === true);
+  check('limited, a manager loses clients that are not theirs', (await dir.put(`/api/users/${mgrId}/clients`, { company_ids: [], all_clients: false })).status === 200
+    && !(await seesJoshi()) && (await mgr.get(J)).status === 404);
+  check('...keeps the clients they manage', ((await mgr.get('/api/companies')).data as any[]).some((c) => c.id === gupta));
+  check('...and gets the ones ticked for them', (await dir.put(`/api/users/${mgrId}/clients`, { company_ids: [quiet.data.companyId], all_clients: false })).status === 200 && await seesJoshi());
+  check('a manager cannot change their own access', (await mgr.put(`/api/users/${mgrId}/clients`, { company_ids: [], all_clients: true })).status === 403);
+  check('every client again', (await dir.put(`/api/users/${mgrId}/clients`, { company_ids: [], all_clients: true })).status === 200 && (await mgr.get(G)).status === 200 && await seesJoshi());
   check('role and rights changes are audited', (await dir.get('/api/audit?action=user.role_changed')).data.length === 1 && (await dir.get('/api/audit?action=user.rights_set')).data.length >= 6);
 } catch (e) {
   fail++; console.error(e);

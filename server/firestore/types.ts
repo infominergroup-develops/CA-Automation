@@ -66,8 +66,10 @@ export interface UserDoc {
   created_at: string;
   created_by: string | null;
   updated_at: string;
-  /** Employees: clients the director ticked for them in the client master. */
+  /** Employees and limited managers: clients the director ticked for them in the client master. */
   client_ids?: string[];
+  /** Managers: false once the director limits them to chosen clients (absent = every client). */
+  all_clients?: boolean;
   designation_id?: string | null;
   /** When the password was last changed (by the person, or reset by the firm). The password is in Firebase Authentication. */
   password_changed_at?: string;

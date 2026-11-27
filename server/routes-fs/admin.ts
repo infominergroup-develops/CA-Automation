@@ -30,10 +30,10 @@ adminRouter.get('/users', requireRole('director', 'manager', 'employee'), h(asyn
   const rows = (await query<UserDoc>(C.users))
     .filter((u) => u.role !== 'client' && (req.user!.role === 'director' || u.status === 'active'))
     .sort((a, b) => ROLE_ORDER.indexOf(a.role) - ROLE_ORDER.indexOf(b.role) || a.name.localeCompare(b.name))
-    .map(({ id, role, name, email, mobile, status, created_at, client_ids, designation_id }) => ({
+    .map(({ id, role, name, email, mobile, status, created_at, client_ids, designation_id, all_clients }) => ({
       id, role, name, email, mobile, status, created_at,
       designation_id: designation_id ?? null, designation: (designation_id && titles.get(designation_id)) || null,
-      ...(req.user!.role === 'director' && { client_ids: client_ids ?? [] }),
+      ...(req.user!.role === 'director' && { client_ids: client_ids ?? [], ...(role === 'manager' && { all_clients: all_clients !== false }) }),
     }));
   // Employees only need to name a client's relationship manager.
   if (req.user!.role === 'employee') {

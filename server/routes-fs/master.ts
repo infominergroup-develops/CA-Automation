@@ -107,14 +107,15 @@ masterRouter.delete('/client-sets/:id', director, h(async (req, res) => {
 
 /* ---------- Clients ticked per employee ---------- */
 
+/** Clients ticked for an employee or a manager; for a manager also whether they see every client (`all_clients`). */
 masterRouter.put('/users/:id/clients', director, h(async (req, res) => {
-  const { company_ids } = parse(z.object({ company_ids: ids }), req.body);
+  const { company_ids, all_clients } = parse(z.object({ company_ids: ids, all_clients: z.boolean().optional() }), req.body);
   const ref = db.collection(C.users).doc(String(req.params.id));
   const u = (await ref.get()).data() as UserDoc | undefined;
-  if (!u || u.role !== 'employee') throw new HttpError(404, 'Not found.');
+  if (!u || (u.role !== 'employee' && u.role !== 'manager')) throw new HttpError(404, 'Not found.');
   await checkCompanies(company_ids);
-  await ref.update({ client_ids: company_ids, updated_at: now() });
-  await auditReq(req, { action: 'user.clients_set', objectType: 'user', objectId: ref.id, details: { clients: company_ids.length } });
+  await ref.update({ client_ids: company_ids, ...(u.role === 'manager' && all_clients !== undefined && { all_clients }), updated_at: now() });
+  await auditReq(req, { action: 'user.clients_set', objectType: 'user', objectId: ref.id, details: { clients: company_ids.length, ...(u.role === 'manager' && { all_clients: all_clients ?? u.all_clients !== false }) } });
   res.json({ ok: true });
 }));
 

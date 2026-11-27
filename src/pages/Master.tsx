@@ -11,7 +11,7 @@ import {
 interface Client { id: string; legal_name: string; group_name: string; work_types: string[] }
 interface WorkType { id: string; name: string }
 interface ClientSet { id: string; name: string; company_ids: string[]; member_ids: string[] }
-interface Staff { id: string; name: string; role: string; status: string; client_ids?: string[]; designation_id?: string | null }
+interface Staff { id: string; name: string; role: string; status: string; client_ids?: string[]; designation_id?: string | null; all_clients?: boolean }
 interface Designation { id: string; name: string }
 
 /** Director's masters: what work we do for each client, which staff see which clients, staff designations, and roles and file rights. */
@@ -27,19 +27,19 @@ export function ClientMaster() {
   const ready = clients && types && sets && staff && titles;
   return (
     <>
-      <PageHeader title="Masters" subtitle="What we do for each client, which staff see which clients, and each person's designation. Managers see every client; employees see these plus their own tasks and clients they added." />
+      <PageHeader title="Masters" subtitle="What we do for each client, which staff see which clients, and each person's designation. Managers see every client unless you limit them under Client access; employees see their ticks plus their own tasks and clients they added." />
       <ErrorText error={e1 || e2 || e3 || e4 || e5} />
       <Tabs value={tab} onChange={(t) => setParams({ tab: t }, { replace: true })} items={[
         { value: 'work', label: 'Work types' },
         { value: 'groups', label: 'Client groups', count: sets?.length },
-        { value: 'staff', label: 'Employee access' },
+        { value: 'staff', label: 'Client access' },
         { value: 'titles', label: 'Designations', count: titles?.length },
         { value: 'rights', label: 'Roles & rights' },
       ]} />
       {!ready ? <LoadingRows rows={6} />
         : tab === 'work' ? <WorkTypes clients={clients} types={types} onChange={() => { reloadClients(); reloadTypes(); }} />
           : tab === 'groups' ? <Groups clients={clients} sets={sets} team={team} onChange={reloadSets} />
-            : tab === 'staff' ? <EmployeeAccess clients={clients} sets={sets} staff={staff.filter((s) => s.role === 'employee' && s.status === 'active')} onChange={reloadStaff} />
+            : tab === 'staff' ? <EmployeeAccess clients={clients} sets={sets} staff={staff.filter((s) => (s.role === 'employee' || s.role === 'manager') && s.status === 'active')} onChange={reloadStaff} />
               : tab === 'titles' ? <Designations titles={titles} staff={staff.filter((s) => s.status === 'active')} onChange={() => { reloadTitles(); reloadStaff(); }} />
                 : <RolesAndRights onChange={reloadStaff} />}
     </>
@@ -208,7 +208,7 @@ function GroupEditor({ set, clients, team, onSaved, onDelete }: { set: ClientSet
         <div><h3 className="text-sm font-semibold text-ink mb-2">Clients in this group</h3>
           <PickList label="clients" items={clients.map((c) => ({ id: c.id, name: c.legal_name, hint: groupIfOther(c) }))} picked={picked} onChange={setPicked} /></div>
         <div><h3 className="text-sm font-semibold text-ink mb-2">Staff who get these clients</h3>
-          <PickList label="staff" items={team.map((s) => ({ id: s.id, name: s.name, hint: s.role === 'manager' ? 'manager (already sees every client)' : 'employee' }))} picked={members} onChange={setMembers} /></div>
+          <PickList label="staff" items={team.map((s) => ({ id: s.id, name: s.name, hint: s.role }))} picked={members} onChange={setMembers} /></div>
         <ErrorText error={err} />
         <div className="flex justify-end"><Button busy={busy} onClick={save} disabled={name.trim().length < 2}>Save group</Button></div>
       </div>
@@ -220,11 +220,11 @@ function EmployeeAccess({ clients, sets, staff, onChange }: { clients: Client[];
   const [who, setWho] = useState(staff[0]?.id ?? '');
   const person = staff.find((s) => s.id === who);
   return (
-    <Card title="Clients each employee can see" description="Tick clients for one employee. They also see clients from their groups, clients they added, and clients they have an open task for.">
-      {!staff.length ? <EmptyState icon={Users} title="No employees yet" /> : (
+    <Card title="Clients each employee and manager can see" description="Tick clients for one person. They also see clients from their groups, clients they added or manage, and clients they have an open task for. Managers see every client until you limit them here.">
+      {!staff.length ? <EmptyState icon={Users} title="No employees or managers yet" /> : (
         <div className="space-y-4">
-          <Field label="Employee">
-            <Select value={who} onChange={(e) => setWho(e.target.value)}>{staff.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</Select>
+          <Field label="Employee or manager">
+            <Select value={who} onChange={(e) => setWho(e.target.value)}>{staff.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.role})</option>)}</Select>
           </Field>
           {person && <EmployeeTicks key={person.id} person={person} clients={clients} sets={sets} onSaved={onChange} />}
         </div>
@@ -236,19 +236,32 @@ function EmployeeAccess({ clients, sets, staff, onChange }: { clients: Client[];
 function EmployeeTicks({ person, clients, sets, onSaved }: { person: Staff; clients: Client[]; sets: ClientSet[]; onSaved: () => void }) {
   const toast = useToast();
   const [picked, setPicked] = useState(new Set(person.client_ids ?? []));
+  const manager = person.role === 'manager';
+  const [everyClient, setEveryClient] = useState(manager && person.all_clients !== false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<unknown>();
   const viaGroups = sets.filter((s) => s.member_ids.includes(person.id));
   const save = async () => {
     setBusy(true); setErr(undefined);
-    try { await api(`/users/${person.id}/clients`, { method: 'PUT', body: { company_ids: [...picked] } }); toast(`${person.name}'s clients saved`); onSaved(); } catch (e) { setErr(e); } finally { setBusy(false); }
+    try {
+      await api(`/users/${person.id}/clients`, { method: 'PUT', body: { company_ids: [...picked], ...(manager && { all_clients: everyClient }) } });
+      toast(`${person.name}'s clients saved`); onSaved();
+    } catch (e) { setErr(e); } finally { setBusy(false); }
   };
   return (
     <>
       {!!viaGroups.length && (
         <p className="text-sm text-slate-600">Also through groups: {viaGroups.map((s) => <Badge key={s.id} tone="brand">{s.name}</Badge>)}</p>
       )}
-      <PickList label="clients" items={clients.map((c) => ({ id: c.id, name: c.legal_name, hint: groupIfOther(c) }))} picked={picked} onChange={setPicked} />
+      {manager && (
+        <label className="flex items-start gap-3 cursor-pointer">
+          <input type="checkbox" className="mt-0.5 size-4 accent-brand-500" checked={everyClient} onChange={(e) => setEveryClient(e.target.checked)} />
+          <span className="text-sm text-ink">Sees every client
+            <span className="block text-xs text-slate-500">Untick to limit {person.name} to the clients ticked below, plus their groups, clients they manage or added, and clients of their open tasks.</span></span>
+        </label>
+      )}
+      {everyClient ? <p className="text-sm text-slate-500">{person.name} sees every client.</p>
+        : <PickList label="clients" items={clients.map((c) => ({ id: c.id, name: c.legal_name, hint: groupIfOther(c) }))} picked={picked} onChange={setPicked} />}
       <ErrorText error={err} />
       <div className="flex justify-end"><Button busy={busy} onClick={save}>Save for {person.name}</Button></div>
     </>
