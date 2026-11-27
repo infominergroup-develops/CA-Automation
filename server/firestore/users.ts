@@ -97,14 +97,22 @@ export const createClientUser = async (c: NewClientLogin) => (await createClient
 
 export const isLocked = (u: UserDoc) => !!u.locked_until && Date.parse(u.locked_until) > Date.now();
 
-/** On a wrong password: count the failure and lock the account after the configured number of tries. */
-export async function recordLoginFailure(u: UserDoc): Promise<void> {
-  const failed = u.failed_logins + 1;
-  const lock = failed >= config.maxFailedLogins;
-  await db.collection(C.users).doc(u.id).update({
-    failed_logins: lock ? 0 : failed,
-    locked_until: lock ? new Date(Date.now() + config.lockMinutes * 60e3).toISOString() : u.locked_until ?? null,
-    updated_at: now(),
+/**
+ * On a wrong password: count the failure and lock the account after the configured number of tries.
+ * Read and written in one transaction, so guesses sent at the same moment are each counted.
+ */
+export async function recordLoginFailure(userId: string): Promise<void> {
+  const ref = db.collection(C.users).doc(userId);
+  await db.runTransaction(async (t) => {
+    const u = (await t.get(ref)).data() as UserDoc | undefined;
+    if (!u) return;
+    const failed = (u.failed_logins ?? 0) + 1;
+    const lock = failed >= config.maxFailedLogins;
+    t.update(ref, {
+      failed_logins: lock ? 0 : failed,
+      locked_until: lock ? new Date(Date.now() + config.lockMinutes * 60e3).toISOString() : u.locked_until ?? null,
+      updated_at: now(),
+    });
   });
 }
 

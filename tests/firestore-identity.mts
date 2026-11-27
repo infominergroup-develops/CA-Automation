@@ -86,8 +86,11 @@ check('endAllSessions clears every device', (await loadValidSession(t1)) === nul
 
 // --- Account lockout
 const victim = await createStaffUser({ role: 'employee', name: 'Lock Me', email: 'lock@demo.test', mobile: '9000000005', password: 'lock test 1234' });
-for (let i = 0; i < 5; i++) await recordLoginFailure((await getUserById(victim))!);
+for (let i = 0; i < 5; i++) await recordLoginFailure(victim);
 check('account locks after 5 failed logins', isLocked((await getUserById(victim))!));
+const racer = await createStaffUser({ role: 'employee', name: 'Race Me', email: 'race@demo.test', mobile: '9000000006', password: 'race test 1234' });
+await Promise.all(Array.from({ length: 5 }, () => recordLoginFailure(racer)));
+check('5 wrong passwords sent at once still lock the account', isLocked((await getUserById(racer))!));
 
 // --- Consent (DPDP)
 const version = await getSetting('privacy_notice_version');

@@ -6,6 +6,9 @@ const scrypt = promisify(crypto.scrypt) as (
   pw: string, salt: Buffer, keylen: number, opts: crypto.ScryptOptions,
 ) => Promise<Buffer>;
 
+// A full 16-byte tag only: without this, Node accepts a tag cut down to 4 bytes, which is far easier to forge.
+const GCM = { authTagLength: 16 } as const;
+
 const SCRYPT = { N: 1 << 15, r: 8, p: 1, maxmem: 64 * 1024 * 1024 };
 
 export async function hashPassword(password: string): Promise<string> {
@@ -64,7 +67,7 @@ export function encryptFile(plain: Buffer, docId: string) {
 
 export function decryptFile(body: Buffer, docId: string, meta: { iv: string; auth_tag: string; wrapped_key: string }) {
   const dek = unwrapKey(meta.wrapped_key, docId);
-  const decipher = crypto.createDecipheriv('aes-256-gcm', dek, Buffer.from(meta.iv, 'base64'));
+  const decipher = crypto.createDecipheriv('aes-256-gcm', dek, Buffer.from(meta.iv, 'base64'), GCM);
   decipher.setAAD(Buffer.from(docId));
   decipher.setAuthTag(Buffer.from(meta.auth_tag, 'base64'));
   return Buffer.concat([decipher.update(body), decipher.final()]);
@@ -81,7 +84,7 @@ export function encryptStream(docId: string) {
 
 /** Undoes encryptStream / encryptFile piece by piece. The stream errors at its end if the bytes were changed. */
 export function decryptStream(docId: string, meta: { iv: string; auth_tag: string; wrapped_key: string }) {
-  const decipher = crypto.createDecipheriv('aes-256-gcm', unwrapKey(meta.wrapped_key, docId), Buffer.from(meta.iv, 'base64'));
+  const decipher = crypto.createDecipheriv('aes-256-gcm', unwrapKey(meta.wrapped_key, docId), Buffer.from(meta.iv, 'base64'), GCM);
   decipher.setAAD(Buffer.from(docId));
   decipher.setAuthTag(Buffer.from(meta.auth_tag, 'base64'));
   return decipher;
@@ -97,7 +100,7 @@ function wrapKey(dek: Buffer, docId: string): string {
 
 function unwrapKey(wrapped: string, docId: string): Buffer {
   const [iv, tag, ct] = wrapped.split('.').map((s) => Buffer.from(s, 'base64'));
-  const d = crypto.createDecipheriv('aes-256-gcm', config.masterKey, iv);
+  const d = crypto.createDecipheriv('aes-256-gcm', config.masterKey, iv, GCM);
   d.setAAD(Buffer.from(`dek:${docId}`));
   d.setAuthTag(tag);
   return Buffer.concat([d.update(ct), d.final()]);

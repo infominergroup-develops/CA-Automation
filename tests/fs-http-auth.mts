@@ -81,6 +81,10 @@ try {
 
   // Lockout after 5 wrong staff passwords
   for (let i = 0; i < 5; i++) await req('POST', '/api/auth/login', { mode: 'staff', identifier: 'asha@demo.test', password: `wrong-pass-${i}1` });
+  const wrongWhileLocked = await req('POST', '/api/auth/login', { mode: 'staff', identifier: 'asha@demo.test', password: 'still-wrong-99' });
+  const wrongUnknown = await req('POST', '/api/auth/login', { mode: 'staff', identifier: 'nobody@demo.test', password: 'still-wrong-99' });
+  check('locked account with a wrong password looks like any wrong password', wrongWhileLocked.status === 401 && wrongWhileLocked.data.error === wrongUnknown.data.error, wrongWhileLocked);
+  check('ids with an encoded slash or dots are 404, not a server error', (await Promise.all(['/api/documents/a%2Fb/download', '/api/documents/a%5Cb/download', '/api/tasks/__x__', '/api/tasks/%E0%A4'].map((p) => req('GET', p)))).every((r) => r.status === 404));
   check('account locked → 429 even with the right password', (await req('POST', '/api/auth/login', { mode: 'staff', identifier: 'asha@demo.test', password: 'correct horse 99' })).status === 429);
 } finally {
   server.close();

@@ -91,6 +91,12 @@ await blobs.put(key, Buffer.concat([stored, Buffer.from('X')])); // corrupt the 
 let tampered = false;
 try { await readDocument((await getDocumentMeta(up.id))!); } catch (e) { tampered = e instanceof IntegrityError; }
 check('tampered file is refused on download', tampered);
+await blobs.put(key, stored); // restore, then cut the stored tag down to 4 bytes (a much easier forgery)
+const whole = (await getDocumentMeta(up.id))!;
+check('the restored file reads back', (await readDocument(whole)).bytes.equals(plain));
+let shortTag = false;
+try { await readDocument({ ...whole, auth_tag: Buffer.from(whole.auth_tag, 'base64').subarray(0, 4).toString('base64') }); } catch (e) { shortTag = e instanceof IntegrityError; }
+check('a shortened auth tag is refused', shortTag);
 
 // --- Soft delete
 await softDeleteDocument(dup.id, 'u-director');

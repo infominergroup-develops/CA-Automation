@@ -56,12 +56,13 @@ authRouter.post('/login', loginLimiter, h(async (req, res) => {
     await auditReq(req, { action: 'auth.login_failed', details: { reason: 'unknown_or_inactive' } });
     throw new HttpError(401, 'Incorrect email or password.');
   }
-  if (isLocked(u)) { await auditReq(req, { action: 'auth.login_blocked', objectType: 'user', objectId: u.id }); throw new HttpError(429, 'Too many failed attempts. Try again in 15 minutes.'); }
   if (!passwordOk) {
-    await recordLoginFailure(u);
-    await auditReq(req, { action: 'auth.login_failed', objectType: 'user', objectId: u.id, details: { reason: 'password' } });
+    // Same answer whether or not the account is locked, so a guesser cannot tell which usernames exist.
+    if (!isLocked(u)) await recordLoginFailure(u.id);
+    await auditReq(req, { action: 'auth.login_failed', objectType: 'user', objectId: u.id, details: { reason: isLocked(u) ? 'locked' : 'password' } });
     throw new HttpError(401, 'Incorrect email or password.');
   }
+  if (isLocked(u)) { await auditReq(req, { action: 'auth.login_blocked', objectType: 'user', objectId: u.id }); throw new HttpError(429, 'Too many failed attempts. Try again in 15 minutes.'); }
   if (config.otpProvider === 'off') { await startSession(req, res, u.id); return res.json({ ok: true, signedIn: true }); }
   const { challengeId, code } = await createChallenge(u.id, clientIp(req));
   await deliverCode(u, code);

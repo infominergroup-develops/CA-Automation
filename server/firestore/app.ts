@@ -43,6 +43,13 @@ export function createApp() {
 
   app.get('/healthz', (_req, res) => res.json({ ok: true, backend: 'firestore' }));
 
+  // Ids become Firestore paths: an encoded slash, '.', '..' or a reserved __name__ would point elsewhere or throw.
+  app.use('/api', (req, _res, next) => {
+    const unsafe = (seg: string) => { const d = decodeURIComponent(seg); return /[/\\]/.test(d) || d === '.' || d === '..' || /^__.*__$/.test(d); };
+    let bad: boolean;
+    try { bad = req.path.split('/').some(unsafe); } catch { bad = true; } // malformed %-encoding
+    next(bad ? new HttpError(404, 'Not found.') : undefined);
+  });
   app.use('/api', express.json({ limit: '100kb' }), cookieParser(), loadSession, csrfGuard);
   app.use('/api', (_req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(); });
 
