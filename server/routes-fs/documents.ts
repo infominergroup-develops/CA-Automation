@@ -111,8 +111,8 @@ documentsRouter.patch('/documents/:id/review', requireRight('edit'), h(async (re
   res.json({ ok: true });
 }));
 
-/** Staff with the edit right (directors and managers by default) move a file to another year, folder or month; its inner folders go with it unless changed. */
-documentsRouter.post('/documents/:id/move', requireRight('edit'), h(async (req, res) => {
+/** Staff with the move right (directors and managers by default) move a file to another year, folder or month; its inner folders go with it unless changed. */
+documentsRouter.post('/documents/:id/move', requireRight('move'), h(async (req, res) => {
   const b = parse(z.object({
     category_id: zCategory,
     fy: zFy,

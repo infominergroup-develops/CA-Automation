@@ -223,7 +223,7 @@ try {
   check('master changes are audited', (await dir.get('/api/audit?action=client_set.')).data.length >= 3);
 
   // Roles and file rights, set by the director per person.
-  const R = (view: boolean, edit: boolean, download: boolean, del: boolean, folders = false) => ({ view, edit, download, delete: del, deleteFolder: folders });
+  const R = (view: boolean, edit: boolean, download: boolean, del: boolean, folders = false, move = edit) => ({ view, edit, move, download, delete: del, deleteFolder: folders });
   const tdoc = theirs.data[0].id, dl = `/api/documents/${tdoc}/download`;
   check('only the director sees and sets rights', (await mgr.get('/api/rights')).status === 403 && (await mgr.put(`/api/users/${empId}/rights`, { rights: R(true, true, true, true) })).status === 403);
   const people = (await dir.get('/api/rights')).data as any[];
@@ -235,6 +235,17 @@ try {
   check('...the employee now moves a file', (await emp.post(`/api/documents/${tdoc}/move`, { category_id: 'others', fy: '2026-27', month: null })).status === 200);
   check('...and asks for a re-upload', (await emp.patch(`/api/documents/${tdoc}/review`, { status: 'reupload', note: 'blurred copy' })).status === 200);
   check('the app is told the rights', (await emp.get('/api/auth/me')).data.user.rights.delete === true);
+  // Moving is its own right: review without move, and move without review.
+  await dir.put(`/api/users/${empId}/rights`, { rights: R(true, true, true, false, false, false) });
+  check('review without move: cannot move', (await emp.post(`/api/documents/${tdoc}/move`, { category_id: 'bank-statements', fy: '2026-27', month: null })).status === 403
+    && (await emp.patch(`/api/documents/${tdoc}/review`, { status: 'accepted' })).status === 200);
+  await dir.put(`/api/users/${empId}/rights`, { rights: R(true, false, true, false, false, true) });
+  check('move without review: moves but cannot review', (await emp.post(`/api/documents/${tdoc}/move`, { category_id: 'bank-statements', fy: '2026-27', month: null })).status === 200
+    && (await emp.patch(`/api/documents/${tdoc}/review`, { status: 'accepted' })).status === 403);
+  check('rights set before "move" existed keep moving with edit', await (async () => {
+    await db.collection('users').doc(empId).update({ rights: { view: true, edit: true, download: true, delete: false } });
+    return (await emp.get('/api/auth/me')).data.user.rights.move === true;
+  })());
   check('download off: viewing works, downloading is refused', (await dir.put(`/api/users/${empId}/rights`, { rights: R(true, false, false, false) })).status === 200
     && (await emp.get(dl)).status === 403 && (await emp.get(`${dl}?view=1`)).status === 200);
   check('view off: the file list and viewer are refused', (await dir.put(`/api/users/${empId}/rights`, { rights: R(false, false, true, false) })).status === 200

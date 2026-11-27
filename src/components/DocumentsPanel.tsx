@@ -53,8 +53,9 @@ export function DocumentsPanel({ companyId, canUpload = true }: { companyId: str
   const [makingSub, setMakingSub] = useState(false);
   const [q, setQ] = useState('');
   const [docs, loadErr, reload, loading] = useLoad(() => (can.view ? api<Doc[]>(`/companies/${companyId}/documents`) : Promise.resolve([])), [companyId, can.view]);
-  // Move, accept, ask for re-upload: the edit right (directors and managers unless changed).
+  // Accept or ask for re-upload: the review ("edit") right; moving files is its own right. Directors and managers unless changed.
   const managerial = can.edit && u.role !== 'client';
+  const canMove = can.move && u.role !== 'client';
   // Document-type folders are shared by every client, so only staff add them; anyone who uploads makes folders inside them.
   const staff = u.role !== 'client';
 
@@ -97,7 +98,7 @@ export function DocumentsPanel({ companyId, canUpload = true }: { companyId: str
     if (failed) toast(`${failed} file${failed > 1 ? 's' : ''} could not be deleted.`, 'error'); else toast(`${list.length} file${list.length > 1 ? 's' : ''} deleted`);
     reload();
   };
-  const canPick = managerial || (staff && can.delete); // ticking files to move or delete them together
+  const canPick = staff && (canMove || can.delete); // ticking files to move or delete them together
   const canDelete = (d: Doc) => can.delete && (u.role !== 'client' || (!!d.mine && Date.parse(d.created_at) > Date.now() - 86400e3));
 
   // Every file inside the open folder, at any depth. Folders people made inside a document type hold files of no month.
@@ -140,7 +141,7 @@ export function DocumentsPanel({ companyId, canUpload = true }: { companyId: str
           <EmptyState icon={FolderOpen} title="Viewing files is turned off for you">{canUpload ? 'You can still upload files above. ' : ''}Ask a director if you need to see them.</EmptyState>
         </Card>
       ) : (
-      <Card title="Documents" description={u.role === 'employee' ? `All files of clients you work on. You can ${sayList(['upload', 'view', can.download && 'download', can.edit && 'move', can.delete && 'delete'])} them.` : `${docs?.length ?? '–'} files`} padded={false}
+      <Card title="Documents" description={u.role === 'employee' ? `All files of clients you work on. You can ${sayList(['upload', 'view', can.download && 'download', can.edit && 'review', can.move && 'move', can.delete && 'delete'])} them.` : `${docs?.length ?? '–'} files`} padded={false}
         actions={
           <div className="relative">
             <Search className="size-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" aria-hidden />
@@ -191,7 +192,7 @@ export function DocumentsPanel({ companyId, canUpload = true }: { companyId: str
                     onChange={(e) => setPicked(new Set(e.target.checked ? files.map((d) => d.id) : []))} />
                   Select all
                 </label>
-                {!!picked.size && managerial && <Button size="sm" variant="secondary" icon={FolderInput} onClick={() => setMoving(true)}>Move {picked.size} file{picked.size > 1 ? 's' : ''}</Button>}
+                {!!picked.size && canMove && <Button size="sm" variant="secondary" icon={FolderInput} onClick={() => setMoving(true)}>Move {picked.size} file{picked.size > 1 ? 's' : ''}</Button>}
                 {!!picked.size && can.delete && <Button size="sm" variant="danger" icon={Trash2} onClick={removePicked}>Delete {picked.size} file{picked.size > 1 ? 's' : ''}</Button>}
               </div>
             )}

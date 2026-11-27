@@ -80,7 +80,8 @@ export const requireRole = (...roles: Role[]) => (req: Request, _res: Response, 
 
 const NO_RIGHT: Record<Right, string> = {
   view: 'Viewing files is turned off for you. Ask a director.',
-  edit: 'Changing files is turned off for you. Ask a director.',
+  edit: 'Reviewing files is turned off for you. Ask a director.',
+  move: 'Moving files is turned off for you. Ask a director.',
   download: 'Downloading files is turned off for you. Ask a director.',
   delete: 'You cannot delete this document.',
   deleteFolder: 'Deleting folders is turned off for you. Ask a director.',

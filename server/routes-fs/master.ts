@@ -195,7 +195,7 @@ masterRouter.put('/users/:id/rights', director, h(async (req, res) => {
   if (!u) throw new HttpError(404, 'Not found.');
   if (u.role === 'director') throw new HttpError(400, 'Directors always have every right.');
   // The role's default is stored as "no custom rights", so a later change to the defaults reaches them.
-  const same = rights && RIGHTS.every((r) => rights[r] === ROLE_RIGHTS[u.role][r] || (u.role === 'client' && (r === 'edit' || r === 'deleteFolder')));
+  const same = rights && RIGHTS.every((r) => rights[r] === ROLE_RIGHTS[u.role][r] || (u.role === 'client' && (r === 'edit' || r === 'move' || r === 'deleteFolder')));
   await ref.update({ rights: same ? null : rights, updated_at: now() });
   await auditReq(req, { action: 'user.rights_set', objectType: 'user', objectId: ref.id, details: { rights: same ? 'role default' : rights } });
   res.json({ ok: true, rights: rightsOf({ role: u.role, rights: same ? null : rights }) });
