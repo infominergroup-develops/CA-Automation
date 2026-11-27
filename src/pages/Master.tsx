@@ -326,7 +326,7 @@ function Designations({ titles, staff, onChange }: { titles: Designation[]; staf
 }
 
 interface Person { id: string; name: string; role: string; status: string; email: string | null; group_name: string | null; rights: Rights; custom: boolean }
-const RIGHT_LABEL: Record<keyof Rights, string> = { view: 'View', edit: 'Edit', download: 'Download', delete: 'Delete' };
+const RIGHT_LABEL: Record<keyof Rights, string> = { view: 'View', edit: 'Edit', download: 'Download', delete: 'Delete files', deleteFolder: 'Delete folders' };
 const title = (role: string) => role[0].toUpperCase() + role.slice(1);
 
 /** The director changes staff roles and ticks what each person, staff or client, may do with files. */
@@ -383,8 +383,8 @@ function RolesAndRights({ onChange }: { onChange: () => void }) {
     <div className="space-y-6">
       <ErrorText error={err} />
       <Card title="Staff" padded={false}
-        description="Change someone's role, and tick what they may do with client files. View = open files in the portal; Edit = move files, accept them or ask for re-upload; Download = save a copy; Delete = remove a file. Everyone can upload and make folders. Directors always have every right.">
-        <Table head={['Name', 'Role', 'View', 'Edit', 'Download', 'Delete', '']}>
+        description="Change someone's role, and tick what they may do with client files. View = open files in the portal; Edit = move files, accept them or ask for re-upload; Download = save a copy; Delete files = remove a file; Delete folders = remove a folder with every file in it. Everyone can upload and make folders. Directors always have every right.">
+        <Table head={['Name', 'Role', 'View', 'Edit', 'Download', 'Delete files', 'Delete folders', '']}>
           {staff.map((p) => (
             <tr key={p.id}>
               <Td><div className="font-semibold text-ink">{p.name}{p.id === me.id && <span className="text-xs font-normal text-slate-400"> (you)</span>}</div><div className="text-xs text-slate-500">{p.email}</div></Td>
@@ -393,7 +393,7 @@ function RolesAndRights({ onChange }: { onChange: () => void }) {
                   {['director', 'manager', 'employee'].map((r) => <option key={r} value={r}>{title(r)}</option>)}
                 </Select>
               </Td>
-              {(['view', 'edit', 'download', 'delete'] as const).map((r) => box(p, r, p.role === 'director'))}
+              {(['view', 'edit', 'download', 'delete', 'deleteFolder'] as const).map((r) => box(p, r, p.role === 'director'))}
               {resetCell(p)}
             </tr>
           ))}

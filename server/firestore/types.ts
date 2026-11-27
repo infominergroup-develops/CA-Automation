@@ -72,7 +72,7 @@ export interface UserDoc {
   /** When the password was last changed (by the person, or reset by the firm). The password is in Firebase Authentication. */
   password_changed_at?: string;
   /** File rights the director set for this person; absent = the role's defaults (see rights.ts). */
-  rights?: Partial<Record<'view' | 'edit' | 'download' | 'delete', boolean>> | null;
+  rights?: Partial<Record<'view' | 'edit' | 'download' | 'delete' | 'deleteFolder', boolean>> | null;
 }
 
 export interface SessionDoc {

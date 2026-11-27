@@ -15,6 +15,8 @@ interface Doc {
   uploaded_by_name: string; mine?: boolean;
 }
 export interface Category { id: number; name: string }
+/** A place in the file manager, as kept in the address. */
+type Place2 = { fy?: string; folder?: string; month?: string; sub?: string };
 
 const MONTHS = ['April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December', 'January', 'February', 'March'];
 const MONTH_NUM = [4, 5, 6, 7, 8, 9, 10, 11, 12, 1, 2, 3];
@@ -56,7 +58,7 @@ export function DocumentsPanel({ companyId, canUpload = true }: { companyId: str
   // Document-type folders are shared by every client, so only staff add them; anyone who uploads makes folders inside them.
   const staff = u.role !== 'client';
 
-  const open = (to: { fy?: string; folder?: string; month?: string; sub?: string }) => {
+  const open = (to: Place2) => {
     const next = new URLSearchParams(params);
     for (const k of ['fy', 'folder', 'month', 'sub'] as const) { next.delete(k); if (to[k]) next.set(k, to[k]); }
     setParams(next);
@@ -78,6 +80,24 @@ export function DocumentsPanel({ companyId, canUpload = true }: { companyId: str
     if (r) attempt(() => api(`/documents/${d.id}`, { method: 'DELETE' }), 'Document deleted');
   };
   const get = (d: Doc) => attempt(() => download(`/documents/${d.id}/download`, d.original_name));
+  // Deleting a folder deletes every file in it, at any depth (the "delete folders" right in Masters).
+  const removeFolder = async (t: { name: string; count: number; to: Place2 }) => {
+    const r = await confirm({ title: `Delete the folder “${t.name}”?`, danger: true, confirmLabel: `Delete ${t.count} file${t.count > 1 ? 's' : ''}`,
+      body: <>All <b>{t.count} file{t.count > 1 ? 's' : ''}</b> in it, including its inner folders, will be removed from the portal. The deletion is recorded in the audit trail.</> });
+    if (r) attempt(() => api(`/companies/${companyId}/folders/delete`, { body: { fy: t.to.fy, category_id: t.to.folder || undefined, month: t.to.month ? Number(t.to.month) : undefined, sub: t.to.sub || undefined } }), `Folder ${t.name} deleted`);
+  };
+  const removePicked = async () => {
+    const list = (docs ?? []).filter((d) => picked.has(d.id));
+    const r = await confirm({ title: `Delete ${list.length} file${list.length > 1 ? 's' : ''}?`, danger: true, confirmLabel: 'Delete',
+      body: 'They will be removed from the portal. The deletion is recorded in the audit trail.' });
+    if (!r) return;
+    let failed = 0;
+    for (const d of list) await api(`/documents/${d.id}`, { method: 'DELETE' }).catch(() => failed++);
+    setPicked(new Set());
+    if (failed) toast(`${failed} file${failed > 1 ? 's' : ''} could not be deleted.`, 'error'); else toast(`${list.length} file${list.length > 1 ? 's' : ''} deleted`);
+    reload();
+  };
+  const canPick = managerial || (staff && can.delete); // ticking files to move or delete them together
   const canDelete = (d: Doc) => can.delete && (u.role !== 'client' || (!!d.mine && Date.parse(d.created_at) > Date.now() - 86400e3));
 
   // Every file inside the open folder, at any depth. Folders people made inside a document type hold files of no month.
@@ -88,14 +108,14 @@ export function DocumentsPanel({ companyId, canUpload = true }: { companyId: str
   const catName = cats?.find((c) => String(c.id) === folder)?.name ?? folder;
   const count = (list: Doc[]) => list.length;
   const madeFolders = (list: Doc[]) => [...new Set(list.map(rel).filter(Boolean).map((r) => r.split('/')[0]))].sort((a, b) => a.localeCompare(b))
-    .map((name) => ({ key: `sub:${name}`, name, count: count(list.filter((d) => rel(d).split('/')[0] === name)), go: () => open({ fy, folder, month, sub: sub ? `${sub}/${name}` : name }) }));
+    .map((name) => ({ key: `sub:${name}`, name, count: count(list.filter((d) => rel(d).split('/')[0] === name)), to: { fy, folder, month, sub: sub ? `${sub}/${name}` : name } }));
   const atTypeRoot = !!folder && !month && !sub;
   // Only folders that hold files: years, document types and months appear once something is uploaded into them.
   const tiles = !docs || q ? []
-    : !fy ? [...new Set(here.map((d) => d.fy))].sort().reverse().map((y) => ({ key: y, name: `FY ${y}`, count: count(here.filter((d) => d.fy === y)), go: () => open({ fy: y }) }))
-      : !folder ? (cats ?? []).map((c) => ({ key: String(c.id), name: c.name, count: count(here.filter((d) => d.category_id === c.id)), go: () => open({ fy, folder: String(c.id) }) })).filter((t) => t.count)
+    : !fy ? [...new Set(here.map((d) => d.fy))].sort().reverse().map((y) => ({ key: y, name: `FY ${y}`, count: count(here.filter((d) => d.fy === y)), to: { fy: y } as Place2 }))
+      : !folder ? (cats ?? []).map((c) => ({ key: String(c.id), name: c.name, count: count(here.filter((d) => d.category_id === c.id)), to: { fy, folder: String(c.id) } as Place2 })).filter((t) => t.count)
         : atTypeRoot ? [
-          ...MONTHS.map((m, i) => ({ key: m, name: m, count: count(here.filter((d) => d.month === MONTH_NUM[i])), go: () => open({ fy, folder, month: String(MONTH_NUM[i]) }) })).filter((t) => t.count),
+          ...MONTHS.map((m, i) => ({ key: m, name: m, count: count(here.filter((d) => d.month === MONTH_NUM[i])), to: { fy, folder, month: String(MONTH_NUM[i]) } as Place2 })).filter((t) => t.count),
           ...madeFolders(here.filter((d) => !d.month)),
         ]
           : madeFolders(here);
@@ -142,14 +162,17 @@ export function DocumentsPanel({ companyId, canUpload = true }: { companyId: str
             {(!!tiles.length || (!q && ((staff && fy && !folder) || (canUpload && folder)))) && (
               <ul className="grid gap-3 p-5 sm:grid-cols-2 lg:grid-cols-3">
                 {tiles.map((t) => (
-                  <li key={t.key}>
-                    <button type="button" onClick={t.go} className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left ring-1 ring-ink/10 hover:ring-brand-500 hover:bg-brand-50/40 transition-colors">
+                  <li key={t.key} className="relative">
+                    <button type="button" onClick={() => open(t.to)} className={`flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left ring-1 ring-ink/10 hover:ring-brand-500 hover:bg-brand-50/40 transition-colors ${staff && can.deleteFolder ? 'pr-12' : ''}`}>
                       {t.count ? <FolderOpen className="size-5 shrink-0 text-brand-700" aria-hidden /> : <Folder className="size-5 shrink-0 text-slate-300" aria-hidden />}
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-sm font-semibold text-ink">{t.name}</span>
                         <span className="block text-xs text-slate-500">{t.count ? `${t.count} file${t.count > 1 ? 's' : ''}` : 'Empty'}</span>
                       </span>
                     </button>
+                    {staff && can.deleteFolder && (
+                      <IconButton label={`Delete folder ${t.name}`} icon={Trash2} onClick={() => removeFolder(t)} className="absolute right-2 top-1/2 -translate-y-1/2" />
+                    )}
                   </li>
                 ))}
                 {!q && ((staff && fy && !folder) || (canUpload && folder && subParts.length < 5)) && (
@@ -161,14 +184,15 @@ export function DocumentsPanel({ companyId, canUpload = true }: { companyId: str
                 )}
               </ul>
             )}
-            {managerial && !!files.length && (
+            {canPick && !!files.length && (
               <div className="flex flex-wrap items-center gap-3 px-5 py-2 border-b border-line text-sm">
                 <label className="flex items-center gap-2 text-slate-600">
                   <input type="checkbox" className="size-4 accent-brand-500" checked={files.every((d) => picked.has(d.id))}
                     onChange={(e) => setPicked(new Set(e.target.checked ? files.map((d) => d.id) : []))} />
                   Select all
                 </label>
-                {!!picked.size && <Button size="sm" variant="secondary" icon={FolderInput} onClick={() => setMoving(true)}>Move {picked.size} file{picked.size > 1 ? 's' : ''}</Button>}
+                {!!picked.size && managerial && <Button size="sm" variant="secondary" icon={FolderInput} onClick={() => setMoving(true)}>Move {picked.size} file{picked.size > 1 ? 's' : ''}</Button>}
+                {!!picked.size && can.delete && <Button size="sm" variant="danger" icon={Trash2} onClick={removePicked}>Delete {picked.size} file{picked.size > 1 ? 's' : ''}</Button>}
               </div>
             )}
             {!!files.length && !!tiles.length && <p className="px-5 pb-2 text-[13px] font-semibold text-slate-500">Not for a particular month</p>}
@@ -182,7 +206,7 @@ export function DocumentsPanel({ companyId, canUpload = true }: { companyId: str
                 {files.map((d) => (
                   <li key={d.id} className="flex flex-col sm:flex-row sm:items-center gap-3 px-5 py-3.5 hover:bg-slate-50/70 transition-colors">
                     <div className="flex items-start gap-3 min-w-0 flex-1">
-                      {managerial && (
+                      {canPick && (
                         <input type="checkbox" aria-label={`Select ${d.original_name}`} className="mt-3 size-4 shrink-0 accent-brand-500" checked={picked.has(d.id)}
                           onChange={(e) => setPicked((p) => { const n = new Set(p); if (e.target.checked) n.add(d.id); else n.delete(d.id); return n; })} />
                       )}

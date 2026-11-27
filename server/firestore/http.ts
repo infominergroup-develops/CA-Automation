@@ -83,6 +83,7 @@ const NO_RIGHT: Record<Right, string> = {
   edit: 'Changing files is turned off for you. Ask a director.',
   download: 'Downloading files is turned off for you. Ask a director.',
   delete: 'You cannot delete this document.',
+  deleteFolder: 'Deleting folders is turned off for you. Ask a director.',
 };
 
 /** Requires one of the person's file rights (set by the director in Masters, or their role's default). */

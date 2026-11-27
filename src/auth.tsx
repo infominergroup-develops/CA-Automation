@@ -2,14 +2,14 @@ import { createContext, useCallback, useContext, useEffect, useState, type React
 import { api } from './api';
 
 export type Role = 'director' | 'manager' | 'employee' | 'client';
-export type Rights = { view: boolean; edit: boolean; download: boolean; delete: boolean };
+export type Rights = { view: boolean; edit: boolean; download: boolean; delete: boolean; deleteFolder: boolean };
 
 /** The role's file rights (same table as server/firestore/rights.ts), for servers that do not send them. */
 const ROLE_RIGHTS: Record<Role, Rights> = {
-  director: { view: true, edit: true, download: true, delete: true },
-  manager: { view: true, edit: true, download: true, delete: false },
-  employee: { view: true, edit: false, download: true, delete: false },
-  client: { view: true, edit: false, download: true, delete: true },
+  director: { view: true, edit: true, download: true, delete: true, deleteFolder: true },
+  manager: { view: true, edit: true, download: true, delete: false, deleteFolder: false },
+  employee: { view: true, edit: false, download: true, delete: false, deleteFolder: false },
+  client: { view: true, edit: false, download: true, delete: true, deleteFolder: false },
 };
 
 export interface Me {
@@ -64,7 +64,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 export const useAuth = () => useContext(Ctx);
 export const useUser = () => useContext(Ctx).me!.user!;
 /** What the signed-in person may do with files (set by the director in Masters, or their role's default). */
-export const useRights = (): Rights => { const u = useUser(); return u.rights ?? ROLE_RIGHTS[u.role]; };
+export const useRights = (): Rights => { const u = useUser(); return { ...ROLE_RIGHTS[u.role], ...u.rights }; };
 /** Tally sync and reports, unless the server says they are not available. */
 export const useHasTally = () => useContext(Ctx).me?.features?.tally !== false;
 /** The director's client master (work types, client groups, employee access); on the Firestore server only. */

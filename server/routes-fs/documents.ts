@@ -145,3 +145,27 @@ documentsRouter.delete('/documents/:id', requireRight('delete'), h(async (req, r
   await auditReq(req, { action: 'document.deleted', objectType: 'document', objectId: doc.id, companyId: doc.company_id });
   res.json({ ok: true });
 }));
+
+/**
+ * Deletes a folder: a year, a document type in a year, a month, or a folder people made, with every file in it at any
+ * depth. Soft delete, like single files: the encrypted files are kept for retention. Needs the "delete folders" right.
+ */
+documentsRouter.post('/companies/:companyId/folders/delete', requireRight('deleteFolder'), h(async (req, res) => {
+  const companyId = String(req.params.companyId);
+  await assertCompany(req.user!, companyId);
+  const b = parse(z.object({
+    fy: zFy,
+    category_id: zCategory.optional(),
+    month: z.number().int().min(1).max(12).optional(),
+    sub: z.string().max(1000).optional().transform((s) => (s ? cleanSubfolder(s) : '')),
+  }), req.body);
+  if ((b.month || b.sub) && !b.category_id) throw new HttpError(400, 'Months and made folders sit inside a document type.');
+  // Same folders as the file manager shows: made folders inside a document type hold files of no month.
+  const inside = (await listDocuments(companyId)).filter((d) => d.fy === b.fy && (!b.category_id || d.category_id === b.category_id)
+    && (b.month ? d.month === b.month : !b.sub || !d.month)
+    && (!b.sub || (d.subfolder ?? '') === b.sub || (d.subfolder ?? '').startsWith(`${b.sub}/`)));
+  await Promise.all(inside.map((d) => softDeleteDocument(d.id, req.user!.id)));
+  await auditReq(req, { action: 'folder.deleted', objectType: 'folder', companyId,
+    details: { fy: b.fy, category_id: b.category_id ?? null, month: b.month ?? null, sub: b.sub, files: inside.length, document_ids: inside.map((d) => d.id) } });
+  res.json({ ok: true, deleted: inside.length });
+}));

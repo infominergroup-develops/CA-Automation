@@ -223,7 +223,7 @@ try {
   check('master changes are audited', (await dir.get('/api/audit?action=client_set.')).data.length >= 3);
 
   // Roles and file rights, set by the director per person.
-  const R = (view: boolean, edit: boolean, download: boolean, del: boolean) => ({ view, edit, download, delete: del });
+  const R = (view: boolean, edit: boolean, download: boolean, del: boolean, folders = false) => ({ view, edit, download, delete: del, deleteFolder: folders });
   const tdoc = theirs.data[0].id, dl = `/api/documents/${tdoc}/download`;
   check('only the director sees and sets rights', (await mgr.get('/api/rights')).status === 403 && (await mgr.put(`/api/users/${empId}/rights`, { rights: R(true, true, true, true) })).status === 403);
   const people = (await dir.get('/api/rights')).data as any[];
@@ -278,6 +278,23 @@ try {
   check('clients change their own password', (await cli.post('/api/me/password', { current: 'newclient123', next: 'ravi own pass 77' })).status === 200
     && (await browser().login('client', 'ravi@mehta.test', 'ravi own pass 77')).data.signedIn === true);
   check('the change is noted on the user record', !!(await db.collection('users').doc(empId).get()).data()?.password_changed_at);
+  // Deleting folders: the "delete folders" right, directors only by default; never clients.
+  const J = `/api/companies/${quiet.data.companyId}/documents`, JF = `/api/companies/${quiet.data.companyId}/folders/delete`;
+  const put = (cat: string, name: string, extra: Record<string, string> = {}) => { const f = file(name, cat, name); for (const [k, v] of Object.entries(extra)) f.set(k, v); return dir.post(J, f); };
+  await put('bank-statements', 'hdfc-1.pdf', { subfolder: 'HDFC' }); await put('bank-statements', 'hdfc-2.pdf', { subfolder: 'HDFC/Current' });
+  await put('bank-statements', 'sbi.pdf', { subfolder: 'SBI' }); await put('bank-statements', 'apr.pdf', { month: '4' }); await put('bank-statements', 'may.pdf', { month: '5' });
+  const left = async () => ((await dir.get(J)).data as any[]).map((d) => d.original_name).sort().join();
+  check('folder delete is directors-only by default', (await mgr.post(JF, { fy: '2026-27', category_id: 'bank-statements', sub: 'HDFC' })).status === 403);
+  check('a month needs its document type', (await dir.post(JF, { fy: '2026-27', month: 4 })).status === 400);
+  check('director deletes a made folder with its inner folders', (await dir.post(JF, { fy: '2026-27', category_id: 'bank-statements', sub: 'HDFC' })).data.deleted === 2
+    && (await left()) === 'apr.pdf,itr.pdf,may.pdf,sbi.pdf');
+  await dir.put(`/api/users/${mgrId}/rights`, { rights: R(true, true, true, false, true) });
+  check('a manager given the right deletes a month', (await mgr.post(JF, { fy: '2026-27', category_id: 'bank-statements', month: 4 })).data.deleted === 1 && (await left()) === 'itr.pdf,may.pdf,sbi.pdf');
+  check('...and a whole year', (await mgr.post(JF, { fy: '2026-27' })).data.deleted === 3 && (await left()) === '');
+  await dir.put(`/api/users/${userId}/rights`, { rights: R(true, false, true, true, true) });
+  check('clients never get folder delete', (await dir.get('/api/rights')).data.find((p: any) => p.id === userId).rights.deleteFolder === false
+    && (await cli.post(`/api/companies/${companyId}/folders/delete`, { fy: '2026-27' })).status === 403);
+  check('folder deletes are audited with each file', (await dir.get('/api/audit?action=folder.deleted')).data.length === 3);
   check('role and rights changes are audited', (await dir.get('/api/audit?action=user.role_changed')).data.length === 1 && (await dir.get('/api/audit?action=user.rights_set')).data.length >= 6);
 } catch (e) {
   fail++; console.error(e);
