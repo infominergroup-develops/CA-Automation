@@ -102,8 +102,7 @@ if (config.isProd) {
 app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
   if (err instanceof HttpError) return res.status(err.status).json({ error: err.message, code: err.code });
   if (err instanceof multer.MulterError) {
-    const msg = err.code === 'LIMIT_FILE_SIZE' ? 'A file is larger than 25 MB.' : 'Upload rejected.';
-    return res.status(413).json({ error: msg });
+    return res.status(413).json({ error: 'Upload rejected.' });
   }
   if ((err as { type?: string }).type === 'entity.too.large') return res.status(413).json({ error: 'Request too large.' });
   if ((err as { type?: string }).type === 'entity.parse.failed') return res.status(400).json({ error: 'Invalid JSON.' });

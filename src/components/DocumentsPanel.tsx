@@ -23,7 +23,6 @@ type Place2 = { fy?: string; path?: string };
 const join = (...parts: string[]) => parts.filter(Boolean).join('/');
 /** "FY 2026-27 / Bank statements / April", or just the year for a file straight in it. */
 const whereIs = (d: { fy: string; path: string }) => [`FY ${d.fy}`, ...d.path.split('/')].filter(Boolean).join(' / ');
-const MAX = 25e6;
 // Files the computer adds by itself, never worth uploading.
 const JUNK = /^(\.|~\$|thumbs\.db$|desktop\.ini$)/i;
 
@@ -381,7 +380,7 @@ function UploadZone({ companyId, all, at, onDone }: { companyId: string; all: Do
     const p = placeFile(f.path, at.fy ? fy : undefined, fy);
     return { ...f, place: { fy: p.fy, sub: join(into, p.sub) } };
   });
-  const ready = planned.filter((f) => f.file.size <= MAX);
+  const ready = planned;
 
   const submit = async () => {
     setErr(undefined);
@@ -417,7 +416,7 @@ function UploadZone({ companyId, all, at, onDone }: { companyId: string; all: Do
   const pickerClass = 'font-semibold text-brand-700 cursor-pointer hover:underline focus-within:ring-2 focus-within:ring-brand-500 rounded';
 
   return (
-    <Card title="Upload documents" description="Files are encrypted the moment they reach us. Any file up to 25 MB, except programs and scripts.">
+    <Card title="Upload documents" description="Files are encrypted the moment they reach us. Any file except programs and scripts.">
       <div className="grid sm:grid-cols-3 gap-4">
         <Field label="Financial year">
           <Select value={fy} disabled={!!at.fy || busy} onChange={(e) => { setFy(e.target.value); setDest(''); }}>{[...new Set([...fyOptions(), ...all.map((d) => d.fy), fy])].sort().reverse().map((f) => <option key={f} value={f}>FY {f}</option>)}</Select>
@@ -448,7 +447,7 @@ function UploadZone({ companyId, all, at, onDone }: { companyId: string; all: Do
       {!!planned.length && (
         <ul className="mt-4 space-y-2 max-h-96 overflow-y-auto">
           {planned.map((f) => {
-            const problem = f.error ?? (f.file.size > MAX ? 'Larger than 25 MB' : '');
+            const problem = f.error ?? '';
             return (
               <li key={f.path + f.file.size} className={`flex items-center gap-3 rounded-lg border px-3 py-2 ${problem ? 'border-red-200 bg-red-50' : 'border-line'}`}>
                 <FileIcon mime={f.file.type} name={f.file.name} />

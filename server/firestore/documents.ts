@@ -1,4 +1,9 @@
-import { decryptFile, encryptFile, sha256 } from '../security/crypto.ts';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import { once } from 'node:events';
+import { Readable, Transform, type Writable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
+import { decryptFile, decryptStream, encryptStream, sha256 } from '../security/crypto.ts';
 import { db } from './client.ts';
 import { FieldValue, getById, newId, now, query } from './store.ts';
 import { blobs } from './storage.ts';
@@ -62,7 +67,9 @@ export async function findDuplicate(companyId: string, hash: string): Promise<Do
 }
 
 export interface UploadInput {
-  companyId: string; categoryId: string; fy: string; month: number | null; name: string; mime: string; bytes: Buffer; uploadedBy: string;
+  companyId: string; categoryId: string; fy: string; month: number | null; name: string; mime: string; uploadedBy: string;
+  /** The file: its bytes, or the path of a file on disk (an upload of any size). */
+  bytes: Buffer | string;
   /** Bucket folder from docFolder(). */
   folder: string;
   /** Staff uploads need no review; only what clients send waits for it. */
@@ -104,27 +111,31 @@ export const docFolder = (client: string, fy: string, category: string, month?: 
 
 /** Encrypts the file, stores the ciphertext, and records metadata. Returns the id, hash and any duplicate. */
 export async function createDocument(u: UploadInput): Promise<{ id: string; sha256: string; duplicateOf: { id: string; created_at: string } | null }> {
-  const hash = sha256(u.bytes);
-  const dup = await findDuplicate(u.companyId, hash);
   const id = newId();
-  const enc = encryptFile(u.bytes, id);
+  const enc = encryptStream(id);
   // The id keeps names unique; the date and name make the folder readable.
   const key = `${u.folder}/${now().slice(0, 10)}_${segment(u.name)}.${id}.enc`;
-  await blobs.put(key, enc.body);
+  // One pass, piece by piece: hashed and counted on the way into the cipher, so no file is ever held in memory.
+  const h = crypto.createHash('sha256');
+  let size = 0;
+  const tap = new Transform({ transform(c: Buffer, _e, cb) { h.update(c); size += c.length; cb(null, c); } });
+  await blobs.putStream(key, [typeof u.bytes === 'string' ? fs.createReadStream(u.bytes) : Readable.from([u.bytes]), tap, enc.cipher]);
+  const hash = h.digest('hex');
   try {
+    const dup = await findDuplicate(u.companyId, hash);
     const doc: DocumentDoc = {
       id, company_id: u.companyId, category_id: u.categoryId, fy: u.fy, month: u.month,
-      ...(u.subfolder && { subfolder: u.subfolder }), original_name: u.name, mime: u.mime, size: u.bytes.length, sha256: hash,
-      wrapped_key: enc.wrappedKey, iv: enc.iv, auth_tag: enc.authTag, blob_key: key,
+      ...(u.subfolder && { subfolder: u.subfolder }), original_name: u.name, mime: u.mime, size, sha256: hash,
+      wrapped_key: enc.wrappedKey, iv: enc.iv, auth_tag: enc.authTag(), blob_key: key,
       uploaded_by: u.uploadedBy, review_status: u.accepted ? 'accepted' : 'pending', review_note: null, reviewed_by: null,
       deleted_at: null, deleted_by: null, created_at: now(),
     };
     await db.collection(C.documents).doc(id).set(doc);
+    return { id, sha256: hash, duplicateOf: dup ? { id: dup.id, created_at: dup.created_at } : null };
   } catch (e) {
     await blobs.delete(key).catch(() => {}); // no orphan ciphertext on failure
     throw e;
   }
-  return { id, sha256: hash, duplicateOf: dup ? { id: dup.id, created_at: dup.created_at } : null };
 }
 
 export async function listDocuments(companyId: string, filter: { categoryId?: string; fy?: string } = {}): Promise<DocumentMeta[]> {
@@ -141,7 +152,7 @@ export async function listDocuments(companyId: string, filter: { categoryId?: st
  */
 export async function moveDocument(doc: DocumentDoc, to: { fy: string; categoryId: string; month: number | null; subfolder: string; folder: string }): Promise<void> {
   const key = `${to.folder}/${doc.blob_key.split('/').pop()}`;
-  if (key !== doc.blob_key) await blobs.put(key, await blobs.get(doc.blob_key));
+  if (key !== doc.blob_key) await blobs.copy(doc.blob_key, key);
   try {
     await db.collection(C.documents).doc(doc.id).update({
       fy: to.fy, category_id: to.categoryId, month: to.month, subfolder: to.subfolder || FieldValue.delete(), blob_key: key,
@@ -170,6 +181,35 @@ export async function readDocument(doc: DocumentDoc): Promise<{ bytes: Buffer; m
   }
   if (plain.length === 0 || sha256(plain) !== doc.sha256) throw new IntegrityError();
   return { bytes: plain, mime: doc.mime, name: doc.original_name, sha256: doc.sha256 };
+}
+
+/**
+ * Streams the decrypted file to `out` piece by piece, for files of any size. The last piece is held back until the
+ * whole file has been authenticated and matches its hash, so a changed file never arrives complete: throws
+ * IntegrityError (`out` untouched if nothing was sent yet), or AbortError if `out` closed first.
+ */
+export async function sendDocument(doc: DocumentDoc, out: Writable): Promise<void> {
+  const stop = new AbortController();
+  const gone = () => stop.abort();
+  out.once('close', gone);
+  try {
+    await pipeline(blobs.getStream(doc.blob_key), decryptStream(doc.id, doc), async (src: AsyncIterable<Buffer>) => {
+      const h = crypto.createHash('sha256');
+      let held: Buffer | undefined;
+      for await (const c of src) {
+        h.update(c);
+        if (held && !out.write(held)) await once(out, 'drain', { signal: stop.signal });
+        held = c;
+      }
+      if (!held || h.digest('hex') !== doc.sha256) throw new IntegrityError();
+      out.end(held);
+    }, { signal: stop.signal });
+  } catch (e) {
+    if (stop.signal.aborted) throw e;
+    throw new IntegrityError(); // as readDocument: anything that stops the file being read back whole counts
+  } finally {
+    out.off('close', gone);
+  }
 }
 
 export async function reviewDocument(id: string, status: DocumentDoc['review_status'], note: string | null, reviewedBy: string): Promise<void> {

@@ -70,6 +70,23 @@ export function decryptFile(body: Buffer, docId: string, meta: { iv: string; aut
   return Buffer.concat([decipher.update(body), decipher.final()]);
 }
 
+/** The same envelope as encryptFile, piece by piece, for files of any size. Read authTag() once the cipher has ended. */
+export function encryptStream(docId: string) {
+  const dek = crypto.randomBytes(32);
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', dek, iv);
+  cipher.setAAD(Buffer.from(docId));
+  return { cipher, iv: iv.toString('base64'), wrappedKey: wrapKey(dek, docId), authTag: () => cipher.getAuthTag().toString('base64') };
+}
+
+/** Undoes encryptStream / encryptFile piece by piece. The stream errors at its end if the bytes were changed. */
+export function decryptStream(docId: string, meta: { iv: string; auth_tag: string; wrapped_key: string }) {
+  const decipher = crypto.createDecipheriv('aes-256-gcm', unwrapKey(meta.wrapped_key, docId), Buffer.from(meta.iv, 'base64'));
+  decipher.setAAD(Buffer.from(docId));
+  decipher.setAuthTag(Buffer.from(meta.auth_tag, 'base64'));
+  return decipher;
+}
+
 function wrapKey(dek: Buffer, docId: string): string {
   const iv = crypto.randomBytes(12);
   const c = crypto.createCipheriv('aes-256-gcm', config.masterKey, iv);

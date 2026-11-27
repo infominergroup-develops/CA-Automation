@@ -73,7 +73,7 @@ SQLite is enough for one firm (hundreds of clients, tens of staff) on one server
 | Authorization | Decided on the server for every request. Managers, like Directors, see every client; employees may add clients, and see a client they added or have an open task for; there they may upload and open every file, with no approval step, until the task is closed.  Employees can never change or delete a file. Unknown or out-of-scope ids return 404. Reviewer ≠ assignee; nobody approves their own time. | `authz.ts` |
 | Document confidentiality | Each file gets its own AES-256-GCM key; that key is wrapped with `MASTER_KEY`. The document id is bound as associated data, so ciphertexts cannot be swapped between records. No public URLs; downloads stream through the API with `no-store`. | `security/crypto.ts`, `routes/documents.ts` |
 | Document integrity and authenticity | SHA-256 of every file is recorded at upload and shown in the UI. Every download is decrypted, authenticated (GCM tag) and re-hashed; a mismatch is refused and logged as `document.integrity_failure`. Duplicate uploads are flagged. | `routes/documents.ts` |
-| Upload safety | File type decided from the bytes (PDF, images, Office, CSV, ZIP only), 25 MB limit, names sanitised. | `routes/documents.ts` |
+| Upload safety | File type decided from the bytes (PDF, images, Office, CSV, ZIP only), names sanitised. | `routes/documents.ts` |
 | Audit trail | Append-only, hash-chained log of sign-ins, views, downloads, uploads, task and access decisions, privacy actions. Database triggers block UPDATE and DELETE; the Director can re-verify the whole chain from the UI. | `audit.ts` |
 | Headers | Helmet with a strict CSP, frame-ancestors none, no-referrer, HSTS in production, no-store on all API responses. | `index.ts` |
 | Errors | Internal errors are logged server-side; the browser gets a generic message. | `index.ts` |
@@ -102,7 +102,7 @@ bash scripts/deploy-droplet.sh DROPLET_IP
 ```
 It sends the settings, key and committed code, runs the portal on `127.0.0.1:3001` (450 MB memory cap), and adds one nginx site, `zz-ca-portal`, with its own certificate at `https://portal.<ip-with-dashes>.sslip.io`. If nginx refuses the site it is undone, and the other sites are never changed. With your own domain pointed at the droplet: `bash scripts/deploy-droplet.sh DROPLET_IP portal.example.in`.
 
-Run it again to deploy updates; the server keeps its copy of the key, so delete the one on your Mac. One upload may be up to 60 MB in total. To take the portal off the droplet's web server: `rm /etc/nginx/sites-enabled/zz-ca-portal && nginx -t && systemctl reload nginx`.
+Run it again to deploy updates; the server keeps its copy of the key, so delete the one on your Mac. Uploads have no size limit: each file streams to the bucket, so a large one needs only time and free disk space while it is stored. To take the portal off the droplet's web server: `rm /etc/nginx/sites-enabled/zz-ca-portal && nginx -t && systemctl reload nginx`.
 
 Run only one copy of the portal: if it is also on App Platform, destroy that app once the droplet works.
 

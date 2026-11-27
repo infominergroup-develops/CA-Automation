@@ -45,9 +45,6 @@ export const config = {
   maxFailedLogins: 5,
   lockMinutes: 15,
 
-  // Documents
-  maxUploadBytes: 25 * 1024 * 1024,
-
   // Task-based document access ends after this many days even if the task stays open.
   accessGrantDays: 30,
 

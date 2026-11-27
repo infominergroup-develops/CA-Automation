@@ -3,14 +3,20 @@
  * Run: npm run test:fs:portal   (emulator on 8089; uses OTP_PROVIDER=file to read codes)
  */
 import './emulator-only.mts';
+import { execFile } from 'node:child_process';
+import crypto from 'node:crypto';
+import { once } from 'node:events';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import type { AddressInfo } from 'node:net';
+import { config } from '../server/config.ts';
 import { createApp } from '../server/firestore/app.ts';
 import { db } from '../server/firestore/client.ts';
 import { createStaffUser } from '../server/firestore/users.ts';
 import { ensureSettingDefaults } from '../server/firestore/settings.ts';
-import { ensureCategories } from '../server/firestore/documents.ts';
+import { ensureCategories, getDocumentMeta } from '../server/firestore/documents.ts';
 
 let pass = 0, fail = 0;
 const check = (name: string, cond: unknown, extra: unknown = '') => { cond ? pass++ : fail++; console.log(`${cond ? 'PASS' : 'FAIL'}  ${name}${cond ? '' : '  ' + JSON.stringify(extra)}`); };
@@ -48,6 +54,9 @@ function browser() {
     post: (p: string, b: unknown = {}) => call('POST', p, b),
     patch: (p: string, b: unknown) => call('PATCH', p, b),
     del: (p: string) => call('DELETE', p),
+    /** The response as it streams in, for files too big to read at once. */
+    get cookie() { return cookie; },
+    raw: (p: string) => fetch(base + p, { headers: { 'x-requested-with': 'fetch', origin: 'http://localhost:5173', cookie } }),
     async staff(email: string, mobile: string) {
       const r = await call('POST', '/api/auth/login', { mode: 'staff', identifier: email, password: PW });
       return call('POST', '/api/auth/verify', { challengeId: r.data.challengeId, code: otp(mobile) });
@@ -126,6 +135,56 @@ try {
   check('filter by category', (await dir.get(`/api/companies/${companyId}/documents?category_id=${gst}`)).data.length === 1);
   const dl = await dir.get(`/api/documents/${up.data[0].id}/download`);
   check('download decrypts to the same bytes', dl.status === 200 && Buffer.compare(dl.data, PDF) === 0);
+
+  // --- No size limit: a 300 MB file streams through, and the server never holds it in memory
+  const bigPath = path.join(os.tmpdir(), `portal-big-${process.pid}.pdf`);
+  const w = fs.createWriteStream(bigPath);
+  w.write('%PDF-1.4\n');
+  const mb = crypto.randomBytes(1 << 20);
+  for (let i = 0; i < 300; i++) if (!w.write(mb)) await once(w, 'drain');
+  w.end('\n%%EOF\n'); await once(w, 'finish');
+  const bigSize = fs.statSync(bigPath).size;
+  const bigHash = crypto.createHash('sha256');
+  for await (const c of fs.createReadStream(bigPath)) bigHash.update(c);
+  const bigSha = bigHash.digest('hex');
+  // Live memory (after a collection), not RSS, which also counts garbage not yet collected. Run with --expose-gc.
+  const gc = (globalThis as { gc?: () => void }).gc;
+  const live = () => { gc?.(); const m = process.memoryUsage(); return m.heapUsed + m.arrayBuffers; };
+  const rss0 = live(); let peak = rss0;
+  const watch = setInterval(() => { peak = Math.max(peak, live()); }, 50);
+  // Sent by curl: Node's own fetch holds a whole form in memory, which would hide what the server does.
+  const sent = await promisify(execFile)('curl', ['-s', '-H', 'x-requested-with: fetch', '-H', 'origin: http://localhost:5173', '-H', `cookie: ${dir.cookie}`,
+    '-F', `category_id=${bank}`, '-F', 'fy=2025-26', '-F', 'month=4', '-F', `files=@${bigPath};type=application/pdf;filename=Big ledger.pdf`,
+    '-w', '\n%{http_code}', `${base}/api/companies/${companyId}/documents`], { maxBuffer: 1 << 20 });
+  const [bigBody, bigStatus] = sent.stdout.split('\n');
+  const big = { status: Number(bigStatus), data: JSON.parse(bigBody) };
+  check('a 300 MB file uploads', big.status === 201 && big.data[0].sha256 === bigSha, big.data);
+  const readAll = async (r: Response) => {
+    const h = crypto.createHash('sha256'); let n = 0;
+    try { for await (const c of r.body as unknown as AsyncIterable<Uint8Array>) { h.update(c); n += c.length; } } catch { return { n, hash: '', cut: true }; }
+    return { n, hash: h.digest('hex'), cut: false };
+  };
+  const bigDl = await readAll(await dir.raw(`/api/documents/${big.data[0].id}/download`));
+  check('and downloads byte for byte', bigDl.n === bigSize && bigDl.hash === bigSha, bigDl);
+  clearInterval(watch);
+  if (gc) check('the server held neither in memory', peak - rss0 < 100e6, `${Math.round((peak - rss0) / 1e6)} MB more`);
+  else console.log('SKIP  memory check (run with node --expose-gc)');
+  check('no temporary upload left behind', !fs.existsSync(path.join(os.tmpdir(), 'portal-uploads')) || fs.readdirSync(path.join(os.tmpdir(), 'portal-uploads')).length === 0);
+  // A changed byte in the middle: the download is cut off, never complete, and logged.
+  const bigDoc = (await getDocumentMeta(big.data[0].id))!;
+  const fh = fs.openSync(path.join(config.dataDir, 'files', bigDoc.blob_key), 'r+');
+  fs.writeSync(fh, Buffer.from([0x42]), 0, 1, 150 << 20); fs.closeSync(fh);
+  const bad = await readAll(await dir.raw(`/api/documents/${big.data[0].id}/download`));
+  check('a changed large file never arrives whole', bad.cut || bad.n < bigSize || bad.hash !== bigSha, bad);
+  check('and is logged', (await dir.get('/api/audit?action=document.integrity_failure')).data.some((a: any) => a.object_id === big.data[0].id));
+  fs.rmSync(bigPath);
+  // A changed small file is refused outright, with nothing sent.
+  const small = await dir.post(`/api/companies/${companyId}/documents`, upload(bank, 'Small.pdf', Buffer.from('%PDF-1.4\nsmall\n%%EOF\n')));
+  const smallDoc = (await getDocumentMeta(small.data[0].id))!;
+  const sp = path.join(config.dataDir, 'files', smallDoc.blob_key);
+  fs.writeFileSync(sp, Buffer.concat([fs.readFileSync(sp), Buffer.from('X')]));
+  check('a changed small file is refused with 409', (await dir.get(`/api/documents/${small.data[0].id}/download`)).status === 409);
+  await dir.del(`/api/documents/${big.data[0].id}`); await dir.del(`/api/documents/${small.data[0].id}`);
   check('review: reupload needs a note', (await dir.patch(`/api/documents/${up2.data[0].id}/review`, { status: 'reupload' })).status === 400);
   check('review: accept', (await dir.patch(`/api/documents/${up.data[0].id}/review`, { status: 'accepted' })).status === 200);
 

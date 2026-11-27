@@ -1,5 +1,6 @@
 import path from 'node:path';
-import { fileTypeFromBuffer } from 'file-type';
+import fs from 'node:fs/promises';
+import { fileTypeFromBuffer, fileTypeFromFile, type FileTypeResult } from 'file-type';
 import { z } from 'zod';
 
 /**
@@ -100,8 +101,20 @@ const CHECKED_NAME = /\.(pdf|jpe?g|png|webp|heic|xlsx|docx|zip)$/i;
  * name; anything else is kept as a plain download (application/octet-stream), never shown in the browser.
  */
 export async function detectType(buf: Buffer, name: string): Promise<string | null> {
+  return BLOCKED_NAME.test(name) ? null : typeOf(await fileTypeFromBuffer(buf), buf, name);
+}
+
+/** detectType for an upload saved on disk, of any size: reads only the parts of the file it needs. */
+export async function detectFileType(file: string, name: string): Promise<string | null> {
   if (BLOCKED_NAME.test(name)) return null;
-  const t = await fileTypeFromBuffer(buf);
+  const fh = await fs.open(file);
+  try {
+    const { buffer, bytesRead } = await fh.read(Buffer.alloc(8192), 0, 8192, 0);
+    return typeOf(await fileTypeFromFile(file), buffer.subarray(0, bytesRead), name);
+  } finally { await fh.close(); }
+}
+
+function typeOf(t: FileTypeResult | undefined, buf: Buffer, name: string): string | null {
   if (t && BLOCKED_BYTES.has(t.ext)) return null;
   if (t && ALLOWED[t.ext]) return ALLOWED[t.ext];
   // Old Word and Excel share one container with other programs' files (Outlook mail, installers), so the name decides.

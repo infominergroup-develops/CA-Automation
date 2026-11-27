@@ -43,6 +43,7 @@ setInterval(() => {
     .catch((e) => console.error(`[${new Date().toISOString()}] cleanup`, e));
 }, 5 * 60e3).unref();
 
-createApp().listen(config.port, () => {
+const server = createApp().listen(config.port, () => {
   console.log(`Infominer portal (Firestore) on http://localhost:${config.port} (${config.isProd ? 'production' : 'development'})`);
 });
+server.requestTimeout = 0; // Node's 5-minute cap would cut off a large upload on a slow line; nginx in front times out idle ones

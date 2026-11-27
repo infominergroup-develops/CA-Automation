@@ -15,7 +15,7 @@ export const documentsRouter = Router();
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: config.maxUploadBytes, files: 20, fields: 10 },
+  limits: { files: 20, fields: 10 },
 });
 
 const filePath = (docId: string) => path.join(config.dataDir, 'files', `${docId}.bin`);

@@ -1,19 +1,23 @@
-import { Router } from 'express';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { Router, type Request, type Response } from 'express';
 import multer from 'multer';
 import { z } from 'zod';
 import { config } from '../config.ts';
-import { cleanName, detectType, zFy, zText } from '../shared.ts';
+import { cleanName, detectFileType, zFy, zText } from '../shared.ts';
 import { assertCompany, canViewDocument, inScope, userNames } from '../firestore/authz.ts';
 import {
-  IntegrityError, cleanSubfolder, createDocument, folderPath, docFolder, moveDocument, getDocumentMeta, listCategories, listDocuments, readDocument, reviewDocument, softDeleteDocument,
+  IntegrityError, cleanSubfolder, createDocument, folderPath, docFolder, moveDocument, getDocumentMeta, listCategories, listDocuments, reviewDocument, sendDocument, softDeleteDocument,
 } from '../firestore/documents.ts';
 import { HttpError, auditReq, can, h, noRight, parse, requireAuth, requireRight } from '../firestore/http.ts';
 
 export const documentsRouter = Router();
 
+// No size limit: each file goes to a temporary file on disk, then to the bucket piece by piece, so memory stays flat.
 const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: config.maxUploadBytes, files: 20, fields: 10 },
+  dest: path.join(os.tmpdir(), 'portal-uploads'),
+  limits: { files: 20, fields: 10 },
 });
 
 const zCategory = z.string().trim().min(1).max(80);
@@ -53,6 +57,15 @@ async function placeCategory(id: string, month?: number | null) {
 }
 
 documentsRouter.post('/companies/:companyId/documents', requireAuth, upload.array('files', 20), h(async (req, res) => {
+  const files = (req.files as Express.Multer.File[] | undefined) ?? [];
+  try {
+    await saveUploads(req, res, files);
+  } finally {
+    await Promise.all(files.map((f) => fs.rm(f.path, { force: true }))); // the temporary copies, whatever happened
+  }
+}));
+
+async function saveUploads(req: Request, res: Response, files: Express.Multer.File[]) {
   const companyId = String(req.params.companyId);
   const company = await assertCompany(req.user!, companyId);
   const b = parse(z.object({
@@ -63,27 +76,26 @@ documentsRouter.post('/companies/:companyId/documents', requireAuth, upload.arra
   }), req.body);
   const category = await placeCategory(b.category_id, b.month);
   const folder = docFolder(company.legal_name, b.fy, category?.name ?? '', b.month, b.subfolder);
-  const files = (req.files as Express.Multer.File[] | undefined) ?? [];
   if (!files.length) throw new HttpError(400, 'Choose at least one file.');
 
   // Check every file before storing any.
   const prepared = await Promise.all(files.map(async (f) => {
     const name = cleanName(f.originalname);
-    const mime = await detectType(f.buffer, name);
+    const mime = await detectFileType(f.path, name);
     if (!mime) throw new HttpError(415, `"${name}" cannot be uploaded: programs and scripts are not allowed, and a file must really be the type its name says.`);
     return { f, name, mime };
   }));
 
   const saved = [];
   for (const p of prepared) {
-    const d = await createDocument({ companyId, categoryId: b.category_id, fy: b.fy, month: b.month ?? null, name: p.name, mime: p.mime, bytes: p.f.buffer,
+    const d = await createDocument({ companyId, categoryId: b.category_id, fy: b.fy, month: b.month ?? null, name: p.name, mime: p.mime, bytes: p.f.path,
       uploadedBy: req.user!.id, folder, subfolder: b.subfolder, accepted: req.user!.role !== 'client' });
     await auditReq(req, { action: 'document.uploaded', objectType: 'document', objectId: d.id, companyId,
       details: { name: p.name, size: p.f.size, sha256: d.sha256, category_id: b.category_id, fy: b.fy, duplicateOf: d.duplicateOf?.id } });
     saved.push({ id: d.id, name: p.name, sha256: d.sha256, duplicateOf: d.duplicateOf ? { id: d.duplicateOf.id, uploadedAt: d.duplicateOf.created_at } : null });
   }
   res.status(201).json(saved);
-}));
+}
 
 documentsRouter.get('/documents/:id/download', requireAuth, h(async (req, res) => {
   const doc = await getDocumentMeta(String(req.params.id));
@@ -91,22 +103,23 @@ documentsRouter.get('/documents/:id/download', requireAuth, h(async (req, res) =
   // ?view=1: opened in the portal's viewer rather than saved; recorded as a view.
   const view = req.query.view === '1';
   if (!can(req.user!, view ? 'view' : 'download')) throw noRight(view ? 'view' : 'download');
-  let file: Awaited<ReturnType<typeof readDocument>>;
+  // Recorded before sending, as a large file takes a while; a failed check is recorded too.
+  await auditReq(req, { action: view ? 'document.viewed' : 'document.downloaded', objectType: 'document', objectId: doc.id, companyId: doc.company_id });
+  const headers = {
+    'Content-Type': doc.mime, 'Content-Length': String(doc.size), 'Cache-Control': 'no-store', 'X-Document-SHA256': doc.sha256,
+    'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(doc.original_name)}`, // never rendered by visiting the URL
+  };
+  for (const [k, v] of Object.entries(headers)) res.setHeader(k, v);
   try {
     // Authenticity check inside: the decrypted bytes must match the hash recorded at upload.
-    file = await readDocument(doc);
+    await sendDocument(doc, res);
   } catch (e) {
-    if (!(e instanceof IntegrityError)) throw e;
+    if (!(e instanceof IntegrityError)) return; // the browser went away mid-download
     await auditReq(req, { action: 'document.integrity_failure', objectType: 'document', objectId: doc.id, companyId: doc.company_id });
+    if (res.headersSent) return void res.destroy(); // part sent: cut it off, so the file never arrives complete
+    for (const k of Object.keys(headers)) res.removeHeader(k);
     throw new HttpError(409, 'This file failed its integrity check and was not served. The incident has been logged.');
   }
-  await auditReq(req, { action: view ? 'document.viewed' : 'document.downloaded', objectType: 'document', objectId: doc.id, companyId: doc.company_id });
-  res.setHeader('Content-Type', file.mime);
-  res.setHeader('Content-Length', file.bytes.length);
-  res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`); // never rendered by visiting the URL
-  res.setHeader('Cache-Control', 'no-store');
-  res.setHeader('X-Document-SHA256', file.sha256);
-  res.end(file.bytes);
 }));
 
 documentsRouter.patch('/documents/:id/review', requireRight('edit'), h(async (req, res) => {
