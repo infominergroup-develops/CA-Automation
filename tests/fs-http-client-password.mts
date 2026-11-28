@@ -9,6 +9,7 @@ import { createApp } from '../server/firestore/app.ts';
 import { db } from '../server/firestore/client.ts';
 import { C } from '../server/firestore/types.ts';
 import { createStaffUser } from '../server/firestore/users.ts';
+import { addMonths, runOn, todayIst } from '../server/firestore/schedules.ts';
 import { ensureSettingDefaults } from '../server/firestore/settings.ts';
 import { acceptStaffUploads, ensureCategories, getDocumentMeta } from '../server/firestore/documents.ts';
 
@@ -351,6 +352,42 @@ try {
   await retail.post('/api/privacy/consent', { purposes: ['service'], version: (await retail.get('/api/privacy/notice')).data.version });
   check('...and sees only their own client', ((await retail.get('/api/companies')).data as any[]).map((c) => c.legal_name).join() === 'Mehta Retail LLP');
   check('a taken username is refused', (await dir.post(`/api/clients/${shared.data.groupId}/users`, { name: 'Ravi 2', mobile: '9876543210', email: 'ravi@mehta.test', password: 'retail pass 2026', username: 'ravi.retail' })).status === 409);
+  // --- Scheduled tasks: directors and managers set them; the whole team sees them while on; anyone may take one
+  const day = (n: number) => new Date(Date.parse(todayIst()) + n * 864e5).toISOString().slice(0, 10); // n days from today in India
+  check('dates: the 31st becomes the end of a short month', addMonths('2026-01-31', 1) === '2026-02-28' && addMonths('2024-01-31', 1) === '2024-02-29');
+  check('dates: the run covering a day, or the next one', JSON.stringify(runOn({ start: '2026-01-01', end: '2026-01-10', repeat: 'monthly' }, '2026-03-05')) === '{"start":"2026-03-01","end":"2026-03-10"}'
+    && runOn({ start: '2026-01-01', end: '2026-01-10', repeat: 'monthly' }, '2026-03-15').start === '2026-04-01'
+    && runOn({ start: '2025-07-01', end: '2025-07-31', repeat: 'yearly' }, '2026-08-01').start === '2027-07-01');
+  check('employee cannot schedule', (await emp2.post('/api/schedules', { company_id: companyId, start: day(-1), end: day(2), repeat: 'monthly' })).status === 403);
+  check('end before start refused', (await dir.post('/api/schedules', { company_id: companyId, start: day(2), end: day(1), repeat: 'monthly' })).status === 400);
+  check('a monthly one must be shorter than a month', (await dir.post('/api/schedules', { company_id: companyId, start: day(0), end: day(40), repeat: 'monthly' })).status === 400);
+  const onNow = await dir.post('/api/schedules', { company_id: companyId, start: day(-1), end: day(2), repeat: 'monthly' });
+  const later = await mgr.post('/api/schedules', { company_id: companyId, start: day(20), end: day(25), repeat: 'yearly' });
+  check('director and manager schedule tasks', onNow.status === 201 && later.status === 201, [onNow.data, later.data]);
+  const listed = (await emp2.get("/api/schedules")).data as any[];
+  check("the whole team sees them, on now first", listed.length === 2 && listed[0].id === onNow.data.id && listed[0].live && !listed[1].live && listed[0].company === "Mehta Traders Pvt Ltd", listed);
+  check('the team is told about the one on now', (await emp2.get('/api/dashboard')).data.scheduledNow === 1);
+  check('anyone takes it', (await emp.post(`/api/schedules/${onNow.data.id}/take`, {})).status === 200);
+  check('...only once', (await mgr.post(`/api/schedules/${onNow.data.id}/take`, {})).status === 409);
+  check('everyone sees who has it', ((await emp2.get('/api/schedules')).data as any[])[0].taken?.name === 'Deepak');
+  check('once taken, nobody is told any more', (await emp2.get('/api/dashboard')).data.scheduledNow === 0);
+  check('a coming one can be taken early', (await emp2.post(`/api/schedules/${later.data.id}/take`, {})).status === 200);
+  check('employee cannot stop a schedule', (await emp2.del(`/api/schedules/${later.data.id}`)).status === 403);
+  check('director stops one', (await dir.del(`/api/schedules/${later.data.id}`)).status === 200 && ((await emp.get('/api/schedules')).data as any[]).length === 1);
+  check('a client cannot see schedules', (await cli.get('/api/schedules')).status === 403);
+  // Taking one opens that client's files to the taker until the run ends, or the schedule is stopped.
+  const kapoor = (await dir.post('/api/clients', { group_name: 'Kapoor Metals', company: { legal_name: 'Kapoor Metals' } })).data.companyId;
+  const KD = `/api/companies/${kapoor}/documents`;
+  check('before taking, the employee cannot open that client', (await emp2.get(KD)).status === 404);
+  const kapoorRun = await dir.post('/api/schedules', { company_id: kapoor, start: day(0), end: day(3), repeat: 'monthly' });
+  check('...not even while it is on', (await emp2.get(KD)).status === 404);
+  await emp2.post(`/api/schedules/${kapoorRun.data.id}/take`, {});
+  check('after taking it, the employee opens the client and its files', (await emp2.get(KD)).status === 200 && ((await emp2.get('/api/companies')).data as any[]).some((c) => c.id === kapoor));
+  check('nobody else gains access by it', (await browser().get(KD)).status !== 200);
+  await dir.del(`/api/schedules/${kapoorRun.data.id}`);
+  check('once the schedule is stopped, access ends', (await emp2.get(KD)).status === 404);
+  check('scheduling and taking are audited', (await dir.get('/api/audit?action=schedule.')).data.length === 8);
+
   check('role and rights changes are audited', (await dir.get('/api/audit?action=user.role_changed')).data.length === 1 && (await dir.get('/api/audit?action=user.rights_set')).data.length >= 6);
 } catch (e) {
   fail++; console.error(e);

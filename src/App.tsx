@@ -13,6 +13,7 @@ import { ClientReports } from './pages/Reports';
 import { Review } from './pages/Review';
 import { TallySync } from './pages/Tally';
 import { TaskDetail, Tasks } from './pages/Tasks';
+import { Schedules } from './pages/Schedules';
 import { Team } from './pages/Team';
 import { Time } from './pages/Time';
 import { ClientMaster } from './pages/Master';
@@ -46,6 +47,7 @@ export function App() {
         <Route path="/clients" element={only(['director', 'manager', 'employee'], <Clients />)} />
         <Route path="/tasks" element={only(['director', 'manager', 'employee'], <Tasks />)} />
         <Route path="/tasks/:id" element={only(['director', 'manager', 'employee'], <TaskDetail />)} />
+        <Route path="/schedules" element={only(['director', 'manager', 'employee'], <Schedules />)} />
         <Route path="/requests" element={only(['client'], <ClientRequests />)} />
         <Route path="/review" element={only(['director', 'manager'], <Review />)} />
         <Route path="/time" element={only(['director', 'manager', 'employee'], <Time />)} />

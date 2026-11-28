@@ -23,6 +23,8 @@ export const C = {
   workTypes: 'work_types',
   clientSets: 'client_sets',
   designations: 'designations',
+  schedules: 'schedules',
+  scheduleTakes: 'schedule_takes',
 } as const;
 
 export type Role = 'director' | 'manager' | 'employee' | 'client';

@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 're
 import { gsap } from 'gsap';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
-  LayoutDashboard, Building2, ListChecks, ClipboardCheck, Timer, Users, History, ShieldCheck, LogOut, KeyRound, Square, Menu, X, FileText, Lock, BarChart3, RefreshCcw, Tags,
+  LayoutDashboard, Building2, ListChecks, ClipboardCheck, Timer, Users, History, ShieldCheck, LogOut, KeyRound, Square, Menu, X, FileText, Lock, BarChart3, RefreshCcw, Tags, CalendarClock,
   type LucideIcon,
 } from 'lucide-react';
 import { api } from '../api';
@@ -12,7 +12,7 @@ import { InfominerLogo } from './InfominerLogo';
 import { Avatar } from './ui';
 import { prefersReducedMotion } from '../motion';
 
-interface NavItem { to: string; label: string; icon: LucideIcon; roles: Role[]; badge?: 'review' }
+interface NavItem { to: string; label: string; icon: LucideIcon; roles: Role[]; badge?: 'review' | 'schedules' }
 const NAV: { group: string; items: NavItem[] }[] = [
   {
     group: 'Workspace',
@@ -21,6 +21,7 @@ const NAV: { group: string; items: NavItem[] }[] = [
       { to: '/', label: 'Home', icon: LayoutDashboard, roles: ['client'] },
       { to: '/clients', label: 'Clients', icon: Building2, roles: ['director', 'manager', 'employee'] },
       { to: '/tasks', label: 'Tasks', icon: ListChecks, roles: ['director', 'manager', 'employee'] },
+      { to: '/schedules', label: 'Scheduled tasks', icon: CalendarClock, roles: ['director', 'manager', 'employee'], badge: 'schedules' },
       { to: '/review', label: 'Review', icon: ClipboardCheck, roles: ['director', 'manager'], badge: 'review' },
       { to: '/reports', label: 'Reports', icon: BarChart3, roles: ['client'] },
       { to: '/requests', label: 'Requests & status', icon: FileText, roles: ['client'] },
@@ -69,14 +70,17 @@ function useTimer(enabled: boolean) {
   return running;
 }
 
-/** Count of items waiting on a manager, shown on the Review link. */
-function useReviewCount(enabled: boolean) {
-  const [n, setN] = useState(0);
+/** Counts shown on the sidebar: items waiting on a manager (Review), and scheduled tasks on now that nobody took. */
+function useBadgeCounts(enabled: boolean) {
+  const [n, setN] = useState({ review: 0, schedules: 0 });
   const { pathname } = useLocation();
   useEffect(() => {
     if (!enabled) return;
-    api<{ toReview: number; accessRequests: number; clientRequests: number }>('/dashboard')
-      .then((d) => setN(d.toReview + d.accessRequests + d.clientRequests)).catch(() => {});
+    const load = () => api<{ toReview: number; accessRequests: number; clientRequests: number; scheduledNow: number }>('/dashboard')
+      .then((d) => setN({ review: d.toReview + d.accessRequests + d.clientRequests, schedules: d.scheduledNow })).catch(() => {});
+    load();
+    window.addEventListener('schedules-changed', load);
+    return () => window.removeEventListener('schedules-changed', load);
   }, [enabled, pathname]);
   return n;
 }
@@ -88,7 +92,7 @@ export function Layout({ children }: { children: ReactNode }) {
   const { pathname } = useLocation();
   const [open, setOpen] = useState(false);
   const running = useTimer(u.role !== 'client');
-  const reviewCount = useReviewCount(u.role === 'director' || u.role === 'manager');
+  const counts = useBadgeCounts(u.role !== 'client');
   const hasTally = useHasTally();
   const hasMaster = useHasClientMaster();
   const clientPassword = useClientPassword(); // clients have a password only while one-time codes are off
@@ -138,9 +142,9 @@ export function Layout({ children }: { children: ReactNode }) {
                         <>
                           <i.icon className={`size-[18px] transition-colors duration-300 ${isActive ? 'text-brand-700' : 'text-slate-400 group-hover:text-ink'}`} aria-hidden />
                           <span className="flex-1">{i.label}</span>
-                          {i.badge === 'review' && reviewCount > 0 && (
+                          {i.badge && counts[i.badge] > 0 && (
                             <span className="min-w-5 h-5 px-1.5 rounded-full bg-brand-500 text-ink-900 text-[11px] font-bold grid place-items-center tabular-nums">
-                              {reviewCount}<span className="sr-only"> waiting</span>
+                              {counts[i.badge]}<span className="sr-only">{i.badge === 'review' ? ' waiting' : ' to take'}</span>
                             </span>
                           )}
                         </>

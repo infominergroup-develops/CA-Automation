@@ -1,5 +1,6 @@
 import { HttpError, type SessionUser } from './http.ts';
 import { getById, query } from './store.ts';
+import { takenCompanyIds } from './schedules.ts';
 import { OPEN_STATUSES, getTask } from './tasks.ts';
 import { C, type ClientSetDoc, type CompanyDoc, type TaskDoc, type UserDoc } from './types.ts';
 
@@ -24,30 +25,32 @@ async function computeScope(u: SessionUser): Promise<string[] | null> {
       return null;
     case 'manager': {
       // Every client, unless the director limited this manager in the client master. Then: ticked clients, groups,
-      // clients they manage or added, and clients of their open tasks (as reviewer, creator or assignee).
+      // clients they manage or added, clients of their open tasks (as reviewer, creator or assignee) and of scheduled tasks they took.
       const me = await getById<UserDoc>(C.users, u.id);
       if (me?.all_clients !== false) return null;
-      const [managed, added, sets, ...taskLists] = await Promise.all([
+      const [taken, managed, added, sets, ...taskLists] = await Promise.all([
+        takenCompanyIds(u.id),
         query<CompanyDoc>(C.companies, { where: [['manager_id', '==', u.id]] }),
         query<CompanyDoc>(C.companies, { where: [['created_by', '==', u.id]] }),
         query<ClientSetDoc>(C.clientSets, { where: [['member_ids', 'array-contains', u.id]] }),
         ...(['reviewer_id', 'created_by', 'assignee_id'] as const).map((f) => query<TaskDoc>(C.tasks, { where: [[f, '==', u.id]] })),
       ]);
       return [...new Set([
-        ...(me.client_ids ?? []), ...managed.map((c) => c.id), ...added.map((c) => c.id), ...sets.flatMap((s) => s.company_ids),
+        ...(me.client_ids ?? []), ...taken, ...managed.map((c) => c.id), ...added.map((c) => c.id), ...sets.flatMap((s) => s.company_ids),
         ...taskLists.flat().filter((t) => OPEN_STATUSES.includes(t.status)).map((t) => t.company_id),
       ])];
     }
     case 'employee': {
-      // Open tasks and clients they added, plus what the director gave them in the client master: ticks and groups.
-      const [tasks, added, me, sets] = await Promise.all([
+      // Open tasks, scheduled tasks they took, and clients they added, plus what the director gave them in the client master.
+      const [tasks, taken, added, me, sets] = await Promise.all([
         query<TaskDoc>(C.tasks, { where: [['assignee_id', '==', u.id]] }),
+        takenCompanyIds(u.id),
         query<CompanyDoc>(C.companies, { where: [['created_by', '==', u.id]] }),
         getById<UserDoc>(C.users, u.id),
         query<ClientSetDoc>(C.clientSets, { where: [['member_ids', 'array-contains', u.id]] }),
       ]);
       return [...new Set([
-        ...tasks.filter((t) => OPEN_STATUSES.includes(t.status)).map((t) => t.company_id), ...added.map((c) => c.id),
+        ...tasks.filter((t) => OPEN_STATUSES.includes(t.status)).map((t) => t.company_id), ...taken, ...added.map((c) => c.id),
         ...(me?.client_ids ?? []), ...sets.flatMap((s) => s.company_ids),
       ])];
     }

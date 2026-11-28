@@ -12,6 +12,7 @@ import { privacyRouter } from '../routes-fs/privacy.ts';
 import { tasksRouter } from '../routes-fs/tasks.ts';
 import { timeRouter } from '../routes-fs/time.ts';
 import { masterRouter } from '../routes-fs/master.ts';
+import { schedulesRouter } from '../routes-fs/schedules.ts';
 import { FirebaseAuthError } from './firebase-auth.ts';
 import { csrfGuard, HttpError, loadSession, requireAuth, requireConsent } from './http.ts';
 
@@ -56,7 +57,7 @@ export function createApp() {
   app.use('/api/auth', authRouter);
   app.use('/api', privacyRouter); // reachable before consent, so clients can read the notice and give consent
   app.use('/api', requireAuth, requireConsent);
-  app.use('/api', adminRouter, documentsRouter, tasksRouter, timeRouter, dashboardRouter, masterRouter);
+  app.use('/api', adminRouter, documentsRouter, tasksRouter, timeRouter, dashboardRouter, masterRouter, schedulesRouter);
 
   app.use('/api', (_req, _res, next) => next(new HttpError(404, 'Not found.')));
 

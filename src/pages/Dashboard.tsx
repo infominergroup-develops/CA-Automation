@@ -9,6 +9,7 @@ import { api, fmtDate } from '../api';
 import { useUser } from '../auth';
 import { Button, Card, EmptyState, ErrorText, LoadingRows, PageHeader, Skeleton, Stat, StatusBadge, useLoad } from '../components/ui';
 import { RaiseRequest, groupIfOther } from './Clients';
+import { SchedulesOnNow } from './Schedules';
 
 interface StaffDash {
   myOpenTasks: number; myRework: number; toReview: number; accessRequests: number; clientRequests: number;
@@ -57,6 +58,7 @@ function StaffDashboard() {
           </>
         )} />
       <ErrorText error={err} />
+      <SchedulesOnNow />
 
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
         {!d ? Array.from({ length: 4 }, (_, i) => <Skeleton key={i} className="h-[84px] rounded-xl" />) : (

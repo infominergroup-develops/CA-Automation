@@ -85,7 +85,7 @@ export function Login() {
       <aside className="relative hidden lg:flex flex-col justify-between overflow-hidden m-3 rounded-[30px] bg-gradient-to-br from-ink via-ink to-ink-900 text-white p-12 xl:p-16 shadow-pop">
         <div data-a="mark" aria-hidden className="pointer-events-none absolute inset-0"><Mark /></div>
         <div aria-hidden className="absolute inset-0 rounded-[30px] ring-1 ring-inset ring-white/10" />
-        <div className="relative" data-a="logo"><InfominerLogo size="md" variant="light" tagline="Chartered Accountants" /></div>
+        <div className="relative" data-a="logo"><InfominerLogo size="md" variant="light" /></div>
         <div className="relative max-w-lg">
           <span data-a="line" className="eyebrow bg-white/10! text-brand-200! ring-white/15! mb-6">Client portal</span>
           <h1 className="text-4xl xl:text-[48px] font-bold leading-[1.06] text-white">
@@ -109,7 +109,7 @@ export function Login() {
       <main className="flex flex-col justify-center px-4 py-10 sm:px-12">
         <div data-a="form" className="w-full max-w-[26rem] mx-auto bezel rounded-[30px]! p-1.5!">
         <div className="bezel-core rounded-[24px]! px-6 py-8 sm:px-8 sm:py-10">
-          <div className="lg:hidden mb-10"><InfominerLogo size="md" tagline="Chartered Accountants" /></div>
+          <div className="lg:hidden mb-10"><InfominerLogo size="md" /></div>
 
           {!challenge ? (
             <>

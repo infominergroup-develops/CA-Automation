@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { companyMap, companyScope } from '../firestore/authz.ts';
 import type { DocumentDoc } from '../firestore/documents.ts';
 import { h } from '../firestore/http.ts';
+import { scheduleRows } from './schedules.ts';
 import { query } from '../firestore/store.ts';
 import { OPEN_STATUSES } from '../firestore/tasks.ts';
 import { C, type AccessGrantDoc, type DpdpRequestDoc, type TaskDoc } from '../firestore/types.ts';
@@ -31,13 +32,14 @@ dashboardRouter.get('/dashboard', h(async (req, res) => {
   }
 
   const staff = u.role !== 'employee';
-  const [open, assigned, grants, pendingDocs, privacy, companies] = await Promise.all([
+  const [open, assigned, grants, pendingDocs, privacy, companies, schedules] = await Promise.all([
     query<TaskDoc>(C.tasks, { where: [['status', 'in', OPEN_STATUSES]] }),
     query<TaskDoc>(C.tasks, { where: [['assignee_id', '==', u.id]] }),
     staff ? query<AccessGrantDoc>(C.accessGrants, { where: [['status', '==', 'requested']] }) : [],
     staff ? query<DocumentDoc>(C.documents, { where: [['review_status', '==', 'pending'], ['deleted_at', '==', null]] }) : [],
     u.role === 'director' ? query<DpdpRequestDoc>(C.dpdpRequests, { where: [['status', 'in', ['open', 'in_progress']]] }) : [],
     companyMap(),
+    scheduleRows(),
   ]);
   const byId = new Map(open.map((t) => [t.id, t]));
   // Overdue and upcoming: an employee sees their own tasks, others the companies in their scope.
@@ -54,6 +56,7 @@ dashboardRouter.get('/dashboard', h(async (req, res) => {
     pendingDocs: pendingDocs.filter((d) => inScope(d.company_id)).length,
     overdue: working.filter((t) => t.due_date && t.due_date < today).length,
     privacyOpen: privacy.length,
+    scheduledNow: schedules.filter((s) => s.live && !s.taken).length, // on now and nobody has taken it: the whole team is told
     upcoming: working.filter((t) => t.due_date).sort((a, b) => a.due_date!.localeCompare(b.due_date!)).slice(0, 8)
       .map((t) => ({ id: t.id, title: t.title, status: t.status, due_date: t.due_date, company: companies.get(t.company_id)?.legal_name })),
   });
