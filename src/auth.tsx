@@ -2,14 +2,14 @@ import { createContext, useCallback, useContext, useEffect, useState, type React
 import { api } from './api';
 
 export type Role = 'director' | 'manager' | 'employee' | 'client';
-export type Rights = { view: boolean; edit: boolean; move: boolean; download: boolean; delete: boolean; deleteFolder: boolean };
+export type Rights = { view: boolean; edit: boolean; move: boolean; download: boolean; downloadFolder: boolean; delete: boolean; deleteFolder: boolean };
 
 /** The role's file rights (same table as server/firestore/rights.ts), for servers that do not send them. */
 const ROLE_RIGHTS: Record<Role, Rights> = {
-  director: { view: true, edit: true, move: true, download: true, delete: true, deleteFolder: true },
-  manager: { view: true, edit: true, move: true, download: true, delete: false, deleteFolder: false },
-  employee: { view: true, edit: false, move: false, download: true, delete: false, deleteFolder: false },
-  client: { view: true, edit: false, move: false, download: true, delete: true, deleteFolder: false },
+  director: { view: true, edit: true, move: true, download: true, downloadFolder: true, delete: true, deleteFolder: true },
+  manager: { view: true, edit: true, move: true, download: true, downloadFolder: true, delete: false, deleteFolder: false },
+  employee: { view: true, edit: false, move: false, download: true, downloadFolder: false, delete: false, deleteFolder: false },
+  client: { view: true, edit: false, move: false, download: true, downloadFolder: false, delete: true, deleteFolder: false },
 };
 
 export interface Me {

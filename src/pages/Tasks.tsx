@@ -10,9 +10,11 @@ import {
   Textarea, useConfirm, useLoad, useToast,
 } from '../components/ui';
 import type { StaffUser } from './Clients';
+import { GstStateField } from '../components/GstStateField';
+import { stateOf } from '../gst';
 
 export interface TaskRow {
-  id: string; company_id: string; company: string; type: string; title: string; period: string | null; status: string;
+  id: string; company_id: string; company: string; type: string; title: string; period: string | null; status: string; gstin?: string | null;
   priority: string; due_date: string | null; assignee: string | null; reviewer: string | null; rework_count: number;
   estimate_hours: number | null; seconds_logged: number; updated_at: string;
 }
@@ -60,7 +62,7 @@ export function TaskTable({ rows, onChanged }: { rows: TaskRow[]; onChanged?: ()
               <Td>
                 <Link to={`/tasks/${t.id}`} className="font-semibold text-ink hover:text-brand-700">{t.title}</Link>
                 <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500 mt-0.5">
-                  <span>{t.type}{t.period ? ` · ${t.period}` : ''}</span>
+                  <span>{t.type}{t.period ? ` · ${t.period}` : ''}{t.gstin ? ` · ${stateOf(t.gstin)}` : ''}</span>
                   {PRIORITY[t.priority] && <Badge tone={PRIORITY[t.priority]![0]}>{PRIORITY[t.priority]![1]}</Badge>}
                   {t.rework_count > 0 && <Badge tone="red">Rework ×{t.rework_count}</Badge>}
                 </div>
@@ -144,17 +146,17 @@ export function Tasks() {
 /** An employee adds work they were given; whoever gave it approves it once it is submitted. */
 function OwnTaskForm({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
   const toast = useToast();
-  const [companies] = useLoad(() => api<{ id: string; legal_name: string; approval?: string | null }[]>('/companies'));
+  const [companies] = useLoad(() => api<{ id: string; legal_name: string; approval?: string | null; gstins?: string[] }[]>('/companies'));
   const [names] = useLoad(() => api<{ id: string; name: string }[]>('/task-names'));
   const [staff] = useLoad(() => api<StaffUser[]>('/users'));
-  const [f, setF] = useState({ company_id: '', task_name_id: '', reviewer_id: '', due_date: '' });
+  const [f, setF] = useState({ company_id: '', task_name_id: '', reviewer_id: '', due_date: '', gstin: '' });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<unknown>();
   const bosses = staff?.filter((s) => s.status === 'active' && (s.role === 'manager' || s.role === 'director'));
   const save = async () => {
     setBusy(true); setErr(undefined);
     try {
-      await api('/tasks/own', { body: { ...f, due_date: f.due_date || undefined } });
+      await api('/tasks/own', { body: { ...f, due_date: f.due_date || undefined, gstin: f.gstin || undefined } });
       toast('Task added. Once you submit it, the person who gave it to you approves it.');
       onDone();
     } catch (e) { setErr(e); } finally { setBusy(false); }
@@ -165,11 +167,12 @@ function OwnTaskForm({ onClose, onDone }: { onClose: () => void; onDone: () => v
       <div className="space-y-4">
         <ErrorText error={err} />
         <Field label="Client" hint="Clients you work on.">
-          <Select value={f.company_id} onChange={(e) => setF({ ...f, company_id: e.target.value })}>
+          <Select value={f.company_id} onChange={(e) => setF({ ...f, company_id: e.target.value, gstin: '' })}>
             <option value="">Choose a client</option>
             {companies?.filter((c) => c.approval !== 'pending').map((c) => <option key={c.id} value={c.id}>{c.legal_name}</option>)}
           </Select>
         </Field>
+        <GstStateField gstins={companies?.find((c) => c.id === f.company_id)?.gstins} value={f.gstin} onChange={(gstin) => setF({ ...f, gstin })} />
         <Field label="Task">
           <Select value={f.task_name_id} onChange={(e) => setF({ ...f, task_name_id: e.target.value })}>
             <option value="">Choose a task</option>
@@ -193,12 +196,12 @@ export function TaskForm({ companyId, assignTaskId, initial, onClose, onDone }:
   { companyId?: string; assignTaskId?: string; initial?: Partial<Record<string, string>>; onClose: () => void; onDone: () => void }) {
   const u = useUser();
   const toast = useToast();
-  const [companies] = useLoad(() => api<{ id: string; legal_name: string }[]>('/companies'));
+  const [companies] = useLoad(() => api<{ id: string; legal_name: string; gstins?: string[] }[]>('/companies'));
   const [staff] = useLoad(() => api<StaffUser[]>('/users'));
   const [meta] = useLoad(() => api<{ types: string[] }>('/tasks/meta'));
   const [f, setF] = useState({
     company_id: companyId ?? '', type: initial?.type ?? 'GST return', title: initial?.title ?? '', period: '', instructions: initial?.instructions ?? '',
-    assignee_id: '', reviewer_id: u.id, due_date: '', statutory_due: '', priority: 'normal', estimate_hours: '',
+    assignee_id: '', reviewer_id: u.id, due_date: '', statutory_due: '', priority: 'normal', estimate_hours: '', gstin: '',
   });
   const [err, setErr] = useState<unknown>();
   const [busy, setBusy] = useState(false);
@@ -238,6 +241,7 @@ export function TaskForm({ companyId, assignTaskId, initial, onClose, onDone }:
           <Field label="Type"><Select value={f.type} onChange={set('type')}>{meta?.types.map((t) => <option key={t}>{t}</option>)}</Select></Field>
           <Field label="Title"><Input value={f.title} onChange={set('title')} placeholder="e.g. GSTR-3B Sep 2026" /></Field>
           <Field label="Period" optional><Input value={f.period} onChange={set('period')} placeholder="e.g. Sep 2026 or FY 2025-26" /></Field>
+          {!assignTaskId && <GstStateField gstins={companies?.find((c) => c.id === f.company_id)?.gstins} value={f.gstin} onChange={(gstin) => setF({ ...f, gstin })} />}
         </div>
         <div className="grid sm:grid-cols-2 gap-4">
           <Field label="Assign to">

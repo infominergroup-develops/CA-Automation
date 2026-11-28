@@ -29,7 +29,9 @@
     "test:fs:portal": "node --expose-gc --import tsx tests/fs-http-portal.mts",
     "test:fs:clientpw": "tsx tests/fs-http-client-password.mts",
     "test:place": "tsx tests/place-file.mts",
-    "test:csv": "tsx tests/csv.mts"
+    "test:csv": "tsx tests/csv.mts",
+    "test:import": "tsx tests/client-import.mts",
+    "test:zip": "tsx tests/zip.mts"
   },
   "dependencies": {
     "@aws-sdk/client-secrets-manager": "^3.1147.0",

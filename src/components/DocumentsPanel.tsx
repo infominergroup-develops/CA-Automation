@@ -144,6 +144,13 @@ export function DocumentsPanel({ companyId, canUpload = true }: { companyId: str
               </span>
             ))}
           </nav>
+          {/* The whole open folder as one .zip: a plain link, so the browser saves it as it arrives, whatever its size. */}
+          {can.downloadFolder && !q && fy && here.length > 0 && (
+            <a href={`/api/companies/${companyId}/folders/download?fy=${encodeURIComponent(fy)}&path=${encodeURIComponent(path ?? '')}`} download
+              className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-sm font-semibold text-ink ring-1 ring-ink/15 hover:bg-slate-50">
+              <Download className="size-4" aria-hidden />Download {path ? 'folder' : 'year'} (.zip)
+            </a>
+          )}
           {/* The open folder's own delete buttons: every file directly here, or the whole folder with its inner folders. */}
           {staff && can.delete && !q && files.length > 0 && (
             <Button size="sm" variant="secondary" icon={Trash2} onClick={() => removeFiles(files, `Delete all ${files.length} file${files.length > 1 ? 's' : ''} in “${crumbs.at(-1)!.name}”?`)}>

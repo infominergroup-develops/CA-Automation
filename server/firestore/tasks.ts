@@ -20,6 +20,7 @@ export interface NewTask {
   company_id: string; type: string; title: string; period?: string; instructions?: string;
   assignee_id: string; reviewer_id: string; created_by: string;
   due_date?: string; statutory_due?: string; priority?: TaskDoc['priority']; estimate_hours?: number;
+  gstin?: string;
 }
 
 export async function createTask(t: NewTask): Promise<string> {
@@ -27,7 +28,7 @@ export async function createTask(t: NewTask): Promise<string> {
   const doc: TaskDoc = {
     id, company_id: t.company_id, type: t.type, title: t.title, period: t.period ?? null, instructions: t.instructions ?? null,
     assignee_id: t.assignee_id, reviewer_id: t.reviewer_id, created_by: t.created_by,
-    due_date: t.due_date ?? null, statutory_due: t.statutory_due ?? null, priority: t.priority ?? 'normal',
+    due_date: t.due_date ?? null, statutory_due: t.statutory_due ?? null, priority: t.priority ?? 'normal', gstin: t.gstin ?? null,
     status: 'assigned', estimate_hours: t.estimate_hours ?? null, rework_count: 0,
     submission_note: null, client_note: null, created_at: now(), updated_at: now(), submitted_at: null, approved_at: null,
   };

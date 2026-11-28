@@ -4,6 +4,7 @@
  * Run: npm run test:fs:clientpw   (emulator on 8089; OTP_PROVIDER=off)
  */
 import './emulator-only.mts';
+import { execFileSync } from 'node:child_process';
 import type { AddressInfo } from 'node:net';
 import { createApp } from '../server/firestore/app.ts';
 import { db } from '../server/firestore/client.ts';
@@ -41,7 +42,7 @@ function browser() {
       headers: { ...(body !== undefined && !isForm ? { 'content-type': 'application/json' } : {}), 'x-requested-with': 'fetch', origin: 'http://localhost:5173', cookie },
     });
     const sc = r.headers.get('set-cookie'); if (sc) cookie = sc.split(';')[0];
-    return { status: r.status, data: (r.headers.get('content-type') ?? '').includes('json') ? await r.json() as any : null };
+    return { status: r.status, headers: r.headers, data: (r.headers.get('content-type') ?? '').includes('json') ? await r.json() as any : Buffer.from(await r.arrayBuffer()) as any };
   };
   return {
     get: (p: string) => call('GET', p),
@@ -134,7 +135,7 @@ try {
   // A client is added once: same name or same GST number is refused.
   check('the same name is refused', await (async () => { const r = await dir.post('/api/clients', { group_name: 'Other', company: { legal_name: ' gupta TEXTILES ' } }); return r.status === 409 && /already exists: Gupta Textiles/.test(r.data.error); })());
   await dir.post('/api/clients', { group_name: 'GST Co', company: { legal_name: 'GST Co One', gstin: '27AAPFU0939F1ZV' } });
-  check('the same GST number is refused', await (async () => { const r = await dir.post('/api/clients', { group_name: 'GST Two', company: { legal_name: 'GST Co Two', gstin: '27aapfu0939f1zv' } }); return r.status === 409 && /GST number already exists: GST Co One/.test(r.data.error); })());
+  check('the same GST number is refused', await (async () => { const r = await dir.post('/api/clients', { group_name: 'GST Two', company: { legal_name: 'GST Co Two', gstin: '27aapfu0939f1zv' } }); return r.status === 409 && /GST number 27AAPFU0939F1ZV already exists: GST Co One/.test(r.data.error); })());
   const mine = await emp.post(G, file('P&L.pdf', 'profit-and-loss', 'mine'));
   check('employee uploads to it', mine.status === 201, mine.data);
   const theirs = await dir.post(G, file('Bank.pdf', 'bank-statements', 'director'));
@@ -239,7 +240,7 @@ try {
   check('master changes are audited', (await dir.get('/api/audit?action=client_set.')).data.length >= 3);
 
   // Roles and file rights, set by the director per person.
-  const R = (view: boolean, edit: boolean, download: boolean, del: boolean, folders = false, move = edit) => ({ view, edit, move, download, delete: del, deleteFolder: folders });
+  const R = (view: boolean, edit: boolean, download: boolean, del: boolean, folders = false, move = edit) => ({ view, edit, move, download, downloadFolder: download, delete: del, deleteFolder: folders });
   const tdoc = theirs.data[0].id, dl = `/api/documents/${tdoc}/download`;
   check('only the director sees and sets rights', (await mgr.get('/api/rights')).status === 403 && (await mgr.put(`/api/users/${empId}/rights`, { rights: R(true, true, true, true) })).status === 403);
   const people = (await dir.get('/api/rights')).data as any[];
@@ -442,7 +443,37 @@ try {
   check('a deleted client can be added again', (await dir.post('/api/clients', { group_name: 'Kapoor Again', company: { legal_name: 'Kapoor Own Co' } })).status === 201);
   check('clients: approving, turning down and deleting are audited', (await dir.get('/api/audit?action=client.')).data.filter((a: any) => ['client.approved', 'client.rejected', 'client.deleted'].includes(a.action)).map((a: any) => a.action).sort().join() === 'client.approved,client.approved,client.deleted,client.rejected');
 
-  check('scheduling and taking are audited', ((await dir.get('/api/audit?action=schedule.')).data as any[]).map((a) => a.action).sort().join() === 'schedule.created,schedule.created,schedule.created,schedule.created,schedule.ended,schedule.ended,schedule.taken,schedule.taken,schedule.taken', (await dir.get('/api/audit?action=schedule.')).data.map((a: any) => a.action));
+  // --- GST registrations by state
+  const multi = await dir.post('/api/clients', { group_name: 'Multi State', company: { legal_name: 'Multi State Co', gstin: '09AAJCC5253D1ZQ', gstins: ['27AAJCC5253D1ZM'] } });
+  const MS = multi.data.companyId;
+  check('a client keeps several GSTINs, one per state', ((await dir.get('/api/companies')).data as any[]).find((c) => c.id === MS)?.gstins?.join() === '09AAJCC5253D1ZQ,27AAJCC5253D1ZM');
+  check('a GSTIN another client has is refused', await (async () => { const r = await dir.post('/api/clients', { group_name: 'Copy', company: { legal_name: 'Copy Co', gstin: '27AAJCC5253D1ZM' } }); return r.status === 409 && /27AAJCC5253D1ZM already exists: Multi State Co/.test(r.data.error); })());
+  check('a state is added to a client', (await mgr.put(`/api/companies/${MS}/gstins`, { gstins: ['09AAJCC5253D1ZQ', '27AAJCC5253D1ZM', '07AAJCC5253D1ZK'] })).status === 200
+    && ((await dir.get(`/api/companies/${MS}`)).data.company.gstins as string[]).length === 3);
+  check('...but not one another client has', (await mgr.put(`/api/companies/${MS}/gstins`, { gstins: ['09AAJCC5253D1ZQ', '27AAPFU0939F1ZV'] })).status === 409);
+  check('an employee cannot change GSTINs', (await emp2.put(`/api/companies/${MS}/gstins`, { gstins: [] })).status === 403);
+  check('a task names one of the client\'s states, not another client\'s', (await dir.post('/api/tasks', { company_id: MS, gstin: '27AAPFU0939F1ZV', type: 'GST return', title: 'GSTR-1 Maharashtra', assignee_id: emp2Id, reviewer_id: mgrId })).status === 400);
+  const stateTask = await dir.post('/api/tasks', { company_id: MS, gstin: '27AAJCC5253D1ZM', type: 'GST return', title: 'GSTR-1 Maharashtra', assignee_id: emp2Id, reviewer_id: mgrId });
+  check('...and the task shows which state', stateTask.status === 201 && ((await dir.get('/api/tasks')).data as any[]).find((t) => t.id === stateTask.data.id)?.gstin === '27AAJCC5253D1ZM');
+  const stateRun = await dir.post('/api/schedules', { company_id: MS, gstin: '07AAJCC5253D1ZK', start: day(5), end: day(8), task_name_id: T, repeat: 'monthly' });
+  check('a scheduled task names a state too', stateRun.status === 201 && ((await dir.get('/api/schedules')).data as any[]).find((r) => r.id === stateRun.data.id)?.gstin === '07AAJCC5253D1ZK');
+
+  // --- Downloading a whole folder as a .zip
+  const inFolder = (name: string, sub: string) => { const f = file(name, '', name); f.append('subfolder', sub); return f; };
+  await dir.post(`/api/companies/${MS}/documents`, inFolder('one.pdf', 'Zip'));
+  await dir.post(`/api/companies/${MS}/documents`, inFolder('two.pdf', 'Zip/Inner'));
+  await dir.post(`/api/companies/${MS}/documents`, inFolder('two.pdf', 'Zip/Inner'));
+  await dir.post(`/api/companies/${MS}/documents`, inFolder('elsewhere.pdf', 'Other'));
+  const ZD = `/api/companies/${MS}/folders/download?fy=2026-27&path=Zip`;
+  check('an employee cannot download folders by default', (await emp2.get(ZD)).status === 403);
+  const zipped = await dir.get(ZD);
+  check('a director downloads the folder as a .zip', zipped.status === 200 && zipped.headers.get('content-type') === 'application/zip' && /Multi%20State%20Co%20FY%202026-27%20Zip\.zip/.test(zipped.headers.get('content-disposition') ?? ''));
+  const names = execFileSync('python3', ['-I', '-c', 'import sys,io,zipfile; z=zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read())); assert z.testzip() is None; print(",".join(sorted(z.namelist())))'], { input: zipped.data }).toString().trim();
+  check('...with its inner folders kept, only that folder, repeats numbered', names === 'Inner/two (2).pdf,Inner/two.pdf,one.pdf', names);
+  check('an empty folder is 404', (await dir.get(`/api/companies/${MS}/folders/download?fy=2026-27&path=Nothing`)).status === 404);
+  check('folder downloads are audited', JSON.parse((await dir.get('/api/audit?action=folder.downloaded')).data[0]?.details ?? '{}').files === 3);
+
+  check('scheduling and taking are audited', ((await dir.get('/api/audit?action=schedule.')).data as any[]).map((a) => a.action).sort().join() === 'schedule.created,schedule.created,schedule.created,schedule.created,schedule.created,schedule.ended,schedule.ended,schedule.taken,schedule.taken,schedule.taken', (await dir.get('/api/audit?action=schedule.')).data.map((a: any) => a.action));
 
   check('role and rights changes are audited', (await dir.get('/api/audit?action=user.role_changed')).data.length === 1 && (await dir.get('/api/audit?action=user.rights_set')).data.length >= 6);
 } catch (e) {

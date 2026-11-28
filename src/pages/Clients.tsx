@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { Building2, ChevronRight, ClipboardList, Plus, Search, Send, Trash2, UserPlus, Users } from 'lucide-react';
+import { Building2, ChevronRight, ClipboardList, FileUp, Plus, Search, Send, Trash2, UserPlus, Users } from 'lucide-react';
 import { api, fmtDate } from '../api';
 import { useClientPassword, useHasClientMaster, useHasTally, useUser } from '../auth';
 import { DocumentsPanel } from '../components/DocumentsPanel';
+import { GSTIN_RE, stateOf } from '../gst';
+import { readClientSheet, type ImportRow } from '../clientImport';
 import { ReportsPanel } from './Reports';
 import {
   Alert, Badge, Button, Card, Chip, EmptyState, ErrorText, Field, Input, LoadingRows, Modal, PageHeader, Select, StatusBadge, Table, Tabs, Td, Textarea,
@@ -14,8 +16,11 @@ import { TaskForm, TaskTable, type TaskRow } from './Tasks';
 interface Company {
   id: string; legal_name: string; pan: string | null; gstin: string | null; tally_name: string | null; group_id: string;
   group_name: string; manager_name: string | null; pending_docs: number; open_tasks: number; work_types?: string[];
-  manager_id?: string | null; approval?: 'pending' | null;
+  manager_id?: string | null; approval?: 'pending' | null; gstins?: string[];
 }
+
+/** GSTINs typed in one box, separated by commas, spaces or new lines. */
+const splitGstins = (s: string) => [...new Set(s.toUpperCase().split(/[\s,;]+/).filter(Boolean))];
 
 const Waiting = () => <Badge tone="amber" dot>Waiting for approval</Badge>;
 export interface StaffUser { id: string; role: string; name: string; email: string; mobile: string; status: string; designation?: string | null; username?: string | null }
@@ -36,12 +41,17 @@ export function Clients() {
   const [work, setWork] = useState('');
   const [types] = useLoad(() => (hasMaster ? api<{ id: string; name: string }[]>('/work-types') : Promise.resolve([])));
   const workName = (id: string) => types?.find((t) => t.id === id)?.name ?? id;
-  const shown = rows?.filter((c) => `${c.legal_name} ${c.group_name} ${c.gstin ?? ''} ${c.pan ?? ''}`.toLowerCase().includes(q.toLowerCase())
+  const [importing, setImporting] = useState(false);
+  const shown = rows?.filter((c) => `${c.legal_name} ${c.group_name} ${(c.gstins ?? []).join(' ')} ${c.pan ?? ''}`.toLowerCase().includes(q.toLowerCase())
     && (!work || c.work_types?.includes(work)));
   return (
     <>
       <PageHeader title="Clients" subtitle={employee ? 'Clients you added or have an open task for.' : 'Every client company of the firm.'}
-        actions={<Button icon={Plus} onClick={() => setAdding(true)}>New client</Button>} />
+        actions={<>
+          {!employee && <Button variant="secondary" icon={FileUp} onClick={() => setImporting(true)}>Import from Excel</Button>}
+          <Button icon={Plus} onClick={() => setAdding(true)}>New client</Button>
+        </>} />
+      {importing && <ImportClients onClose={() => { setImporting(false); reload(); }} />}
       <Card padded={false} title={`${rows?.length ?? '–'} companies`} actions={<>
         <div className="relative">
           <Search className="size-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" aria-hidden />
@@ -70,7 +80,7 @@ export function Clients() {
                       {groupIfOther(c) && <div className="text-xs text-slate-500">Group · {groupIfOther(c)}</div>}
                       {!!c.work_types?.length && <div className="flex flex-wrap gap-1 mt-1">{c.work_types.map((w) => <Badge key={w} tone="slate">{workName(w)}</Badge>)}</div>}
                     </Td>
-                    <Td className="font-mono text-xs text-slate-600">{c.gstin ?? '—'}</Td>
+                    <Td className="font-mono text-xs text-slate-600">{c.gstin ?? '—'}{(c.gstins?.length ?? 0) > 1 && <span className="font-sans text-slate-400"> +{c.gstins!.length - 1} more</span>}</Td>
                     {!employee && (
                       <>
                         <Td>{c.manager_name ?? <span className="text-slate-400">Unassigned</span>}</Td>
@@ -127,7 +137,7 @@ function NewClient({ onClose, onDone }: { onClose: () => void; onDone: () => voi
       const made = await api<{ username: string | null; pending: boolean }>('/clients', {
         body: {
           group_name: f.group_name || f.legal_name,
-          company: { legal_name: f.legal_name, pan: f.pan, gstin: f.gstin, tally_name: f.tally_name || undefined, manager_id: f.manager_id || undefined },
+          company: { legal_name: f.legal_name, pan: f.pan, gstin: splitGstins(f.gstin)[0] ?? '', gstins: splitGstins(f.gstin).slice(1), tally_name: f.tally_name || undefined, manager_id: f.manager_id || undefined },
           ...(withLogin && { contact: { name: f.name, mobile: f.mobile, email: f.email, username: f.username.trim(), ...(clientPassword && { password: f.password }) } }),
           ...(work.length && { work_types: work }),
         },
@@ -148,7 +158,9 @@ function NewClient({ onClose, onDone }: { onClose: () => void; onDone: () => voi
             <Field label="Legal name"><Input value={f.legal_name} onChange={set('legal_name')} placeholder="e.g. Sharma Traders Pvt Ltd" /></Field>
             <Field label="Client group" optional hint="Owner or family group. Defaults to the company name."><Input value={f.group_name} onChange={set('group_name')} /></Field>
             <Field label="PAN" optional><Input value={f.pan} onChange={set('pan')} maxLength={10} className="uppercase font-mono" placeholder="AAAAA9999A" /></Field>
-            <Field label="GSTIN" optional><Input value={f.gstin} onChange={set('gstin')} maxLength={15} className="uppercase font-mono" placeholder="09AAAAA9999A1Z5" /></Field>
+            <Field label="GSTIN" optional hint="Registered in more than one state? Enter each, separated by commas.">
+              <Input value={f.gstin} onChange={set('gstin')} maxLength={400} className="uppercase font-mono" placeholder="09AAAAA9999A1Z5" />
+            </Field>
             {u.role !== 'manager' && (
               <Field label="Relationship manager">
                 <Select value={f.manager_id} onChange={set('manager_id')}>
@@ -209,6 +221,7 @@ function StaffCompany() {
   const [newTask, setNewTask] = useState(false);
   const [addContact, setAddContact] = useState(false);
   const [settingPassword, setSettingPassword] = useState<{ id: string; name: string } | null>(null);
+  const [editingGst, setEditingGst] = useState(false);
   const clientPassword = useClientPassword();
   const c = data?.company;
   const nav = useNavigate();
@@ -240,7 +253,8 @@ function StaffCompany() {
         subtitle={
           <span className="flex flex-wrap gap-2 mt-1">
             {groupIfOther(c) && <Badge>Group · {groupIfOther(c)}</Badge>}
-            {c.gstin && <Badge><span className="font-mono">GSTIN {c.gstin}</span></Badge>}
+            {gstinsOf(c).map((g) => <Badge key={g}>{stateOf(g)} · <span className="font-mono">{g}</span></Badge>)}
+            {managerial && <button type="button" onClick={() => setEditingGst(true)} className="text-xs font-semibold text-brand-700 hover:underline">{gstinsOf(c).length ? 'Edit GST numbers' : 'Add GST numbers'}</button>}
             {c.pan && <Badge><span className="font-mono">PAN {c.pan}</span></Badge>}
             {c.manager_name && <Badge tone="brand">Manager · {c.manager_name}</Badge>}
           </span>
@@ -286,6 +300,7 @@ function StaffCompany() {
         </Card>
       )}
       {newTask && <TaskForm companyId={c.id} onClose={() => setNewTask(false)} onDone={() => { setNewTask(false); reloadTasks(); setTab('tasks'); }} />}
+      {editingGst && <GstEditor companyId={c.id} gstins={gstinsOf(c)} onClose={() => setEditingGst(false)} onDone={() => { setEditingGst(false); reload(); }} />}
       {addContact && <AddContact groupId={c.group_id} onClose={() => setAddContact(false)} onDone={() => { setAddContact(false); reload(); }} />}
       {settingPassword && <SetClientPassword contact={settingPassword} onClose={() => setSettingPassword(null)} />}
     </>
@@ -441,5 +456,97 @@ export function ClientRequests() {
       </div>
       {asking && <RaiseRequest onClose={() => setAsking(false)} onDone={() => { setAsking(false); reload(); }} />}
     </>
+  );
+}
+
+const gstinsOf = (c: { gstin: string | null; gstins?: string[] }) => (c.gstins?.length ? c.gstins : c.gstin ? [c.gstin] : []);
+
+/** A client's GST registrations, one per state; the first is the main one. */
+function GstEditor({ companyId, gstins, onClose, onDone }: { companyId: string; gstins: string[]; onClose: () => void; onDone: () => void }) {
+  const toast = useToast();
+  const [text, setText] = useState(gstins.join('\n'));
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<unknown>();
+  const list = splitGstins(text);
+  const bad = list.filter((g) => !GSTIN_RE.test(g));
+  const save = async () => {
+    setBusy(true); setErr(undefined);
+    try { await api(`/companies/${companyId}/gstins`, { method: 'PUT', body: { gstins: list } }); toast('GST numbers saved'); onDone(); }
+    catch (e) { setErr(e); } finally { setBusy(false); }
+  };
+  return (
+    <Modal title="GST numbers" description="One per state the client is registered in. The first is the main one." onClose={onClose}
+      footer={<><Button variant="ghost" onClick={onClose}>Cancel</Button><Button busy={busy} disabled={!!bad.length} onClick={save}>Save</Button></>}>
+      <div className="space-y-3">
+        <Field label="GSTINs" hint="One per line." error={bad.length ? `Not a valid GSTIN: ${bad.join(', ')}` : undefined}>
+          <Textarea value={text} onChange={(e) => setText(e.target.value)} rows={5} className="font-mono uppercase" placeholder={'09AAAAA9999A1Z5\n27AAAAA9999A1Z3'} />
+        </Field>
+        {!!list.length && !bad.length && (
+          <ul className="text-sm text-slate-600 space-y-1">{list.map((g) => <li key={g}>{stateOf(g)} · <span className="font-mono">{g}</span></li>)}</ul>
+        )}
+        <ErrorText error={err} />
+      </div>
+    </Modal>
+  );
+}
+
+type ImportResult = 'added' | string;
+
+/** Adds clients from an Excel list (name, GSTIN, PAN), without portal logins. Existing clients are skipped, not changed. */
+function ImportClients({ onClose }: { onClose: () => void }) {
+  const toast = useToast();
+  const [rows, setRows] = useState<ImportRow[]>();
+  const [err, setErr] = useState<unknown>();
+  const [done, setDone] = useState<Record<number, ImportResult>>({});
+  const [busy, setBusy] = useState(false);
+  const read = async (file: File | undefined) => {
+    setErr(undefined); setRows(undefined); setDone({});
+    if (!file) return;
+    try {
+      const X = await import('xlsx');
+      const wb = X.read(await file.arrayBuffer());
+      setRows(readClientSheet(X.utils.sheet_to_json<unknown[]>(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: '' })));
+    } catch (e) { setErr(e); }
+  };
+  const ready = rows?.filter((r) => !r.problem && !done[r.line]) ?? [];
+  const run = async () => {
+    setBusy(true);
+    const out: Record<number, ImportResult> = { ...done };
+    for (const r of ready) {
+      try {
+        await api('/clients', { body: { group_name: r.name, company: { legal_name: r.name, pan: r.pan, gstin: r.gstins[0] ?? '', gstins: r.gstins.slice(1) } } });
+        out[r.line] = 'added';
+      } catch (e) { out[r.line] = (e as Error).message; }
+      setDone({ ...out });
+    }
+    setBusy(false);
+    const added = Object.values(out).filter((v) => v === 'added').length;
+    toast(`${added} client${added === 1 ? '' : 's'} added${added < ready.length ? `; ${ready.length - added} skipped (see the list)` : ''}.`);
+  };
+  const status = (r: ImportRow) => r.problem ? <Badge tone="red">{r.problem}</Badge>
+    : done[r.line] === 'added' ? <Badge tone="green" dot>Added</Badge>
+      : done[r.line] ? <Badge tone="amber">{done[r.line]}</Badge> : <span className="text-slate-400">Ready</span>;
+  return (
+    <Modal title="Import clients from Excel" wide="full" onClose={onClose}
+      description="Columns needed: the client name, and if you have them GSTIN and PAN. Each row becomes a client without a portal login; a login can be added later. Clients that already exist (same name or GSTIN) are skipped."
+      footer={<><Button variant="ghost" onClick={onClose}>Close</Button><Button busy={busy} disabled={!ready.length} onClick={run}>{ready.length ? `Add ${ready.length} client${ready.length === 1 ? '' : 's'}` : 'Nothing to add'}</Button></>}>
+      <div className="space-y-4">
+        <Input type="file" accept=".xlsx,.xls,.csv" aria-label="Excel file" onChange={(e) => read(e.target.files?.[0])} />
+        <ErrorText error={err} />
+        {rows && (rows.length ? (
+          <Table head={['Row', 'Client name', 'GSTIN', 'PAN', '']} label="Clients to import">
+            {rows.map((r) => (
+              <tr key={r.line}>
+                <Td className="text-slate-500 tabular-nums">{r.line}</Td>
+                <Td className="font-semibold text-ink">{r.name}</Td>
+                <Td className="font-mono text-xs">{r.gstins.length ? r.gstins.map((g) => <div key={g}>{g} <span className="font-sans text-slate-500">{GSTIN_RE.test(g) ? stateOf(g) : ''}</span></div>) : '—'}</Td>
+                <Td className="font-mono text-xs">{r.pan || '—'}</Td>
+                <Td>{status(r)}</Td>
+              </tr>
+            ))}
+          </Table>
+        ) : <p className="text-sm text-slate-500">No client rows found in the first sheet.</p>)}
+      </div>
+    </Modal>
   );
 }

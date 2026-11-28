@@ -184,29 +184,37 @@ export async function readDocument(doc: DocumentDoc): Promise<{ bytes: Buffer; m
 }
 
 /**
- * Streams the decrypted file to `out` piece by piece, for files of any size. The last piece is held back until the
- * whole file has been authenticated and matches its hash, so a changed file never arrives complete: throws
- * IntegrityError (`out` untouched if nothing was sent yet), or AbortError if `out` closed first.
+ * Decrypts the file piece by piece into `write`, for files of any size. The last piece is held back until the whole
+ * file has been authenticated and matches its hash, so a changed file is never passed on complete: throws
+ * IntegrityError (nothing written if it fails in the first piece), or the abort error if `signal` fires first.
  */
-export async function sendDocument(doc: DocumentDoc, out: Writable): Promise<void> {
-  const stop = new AbortController();
-  const gone = () => stop.abort();
-  out.once('close', gone);
+export async function streamDocument(doc: DocumentDoc, write: (chunk: Buffer) => Promise<void>, signal: AbortSignal): Promise<void> {
   try {
     await pipeline(blobs.getStream(doc.blob_key), decryptStream(doc.id, doc), async (src: AsyncIterable<Buffer>) => {
       const h = crypto.createHash('sha256');
       let held: Buffer | undefined;
       for await (const c of src) {
         h.update(c);
-        if (held && !out.write(held)) await once(out, 'drain', { signal: stop.signal });
+        if (held) await write(held);
         held = c;
       }
       if (!held || h.digest('hex') !== doc.sha256) throw new IntegrityError();
-      out.end(held);
-    }, { signal: stop.signal });
+      await write(held);
+    }, { signal });
   } catch (e) {
-    if (stop.signal.aborted) throw e;
+    if (signal.aborted) throw e;
     throw new IntegrityError(); // as readDocument: anything that stops the file being read back whole counts
+  }
+}
+
+/** streamDocument into a response (or any stream), ended once the file is through. */
+export async function sendDocument(doc: DocumentDoc, out: Writable): Promise<void> {
+  const stop = new AbortController();
+  const gone = () => stop.abort();
+  out.once('close', gone);
+  try {
+    await streamDocument(doc, async (c) => { if (!out.write(c)) await once(out, 'drain', { signal: stop.signal }); }, stop.signal);
+    out.end();
   } finally {
     out.off('close', gone);
   }

@@ -5,7 +5,7 @@ import { config } from '../config.ts';
 import { zEmail, zGstin, zId, zMobile, zPan, zText, zUsername } from '../shared.ts';
 import { passwordProblem } from '../security/crypto.ts';
 import { assertCompany, companyScope, inScope, userNames } from '../firestore/authz.ts';
-import { approveCompany, archiveCompany } from '../firestore/clients.ts';
+import { approveCompany, archiveCompany, gstinsOf } from '../firestore/clients.ts';
 import { db } from '../firestore/client.ts';
 import { HttpError, auditReq, h, parse, requireAuth, requireRole, type SessionUser } from '../firestore/http.ts';
 import { endAllSessions } from '../firestore/sessions.ts';
@@ -110,6 +110,8 @@ const companyFields = z.object({
   legal_name: zText(200).min(2),
   pan: optional(zPan),
   gstin: optional(zGstin),
+  /** More registrations, one per state. Together with `gstin` they make the client's list. */
+  gstins: z.array(zGstin).max(40).optional(),
   tally_name: zText(200).optional(),
   manager_id: zId.optional(),
 });
@@ -124,14 +126,19 @@ const contactFields = z.object({
  * Deleted clients do not count, so one can be added again.
  */
 // shortcut: check-then-write, so two simultaneous creates could both pass; reserve the name in a transaction if that ever matters.
-async function checkNotExisting(legalName: string, gstin: string | undefined) {
-  const folder = segment(legalName).toLowerCase();
-  const all = await query<CompanyDoc>(C.companies);
-  const sameName = all.find((c) => segment(c.legal_name).toLowerCase() === folder);
+async function checkNotExisting(legalName: string | null, gstins: string[], exceptId?: string) {
+  const all = (await query<CompanyDoc>(C.companies)).filter((c) => c.id !== exceptId);
+  const folder = legalName && segment(legalName).toLowerCase();
+  const sameName = folder && all.find((c) => segment(c.legal_name).toLowerCase() === folder);
   if (sameName) throw new HttpError(409, `This client already exists: ${sameName.legal_name}.`);
-  const sameGst = gstin && all.find((c) => c.gstin === gstin);
-  if (sameGst) throw new HttpError(409, `A client with this GST number already exists: ${sameGst.legal_name}.`);
+  for (const g of gstins) {
+    const sameGst = all.find((c) => gstinsOf(c).includes(g));
+    if (sameGst) throw new HttpError(409, `A client with the GST number ${g} already exists: ${sameGst.legal_name}.`);
+  }
 }
+
+/** The GSTINs given for a client, first one first, without repeats. */
+const gstList = (b: { gstin?: string; gstins?: string[] }) => [...new Set([b.gstin, ...(b.gstins ?? [])].filter((g): g is string => !!g))];
 
 /** While OTP is off a client signs in with the password the firm sets, so it is required and must be strong. */
 function clientPassword(pw: string | undefined): string | undefined {
@@ -156,7 +163,7 @@ async function checkManager(managerId: string | undefined) {
 }
 
 const companyDoc = (id: string, groupId: string, b: z.infer<typeof companyFields>, managerId: string | undefined, by: string): CompanyDoc => ({
-  id, group_id: groupId, legal_name: b.legal_name, pan: b.pan ?? null, gstin: b.gstin ?? null,
+  id, group_id: groupId, legal_name: b.legal_name, pan: b.pan ?? null, gstin: gstList(b)[0] ?? null, gstins: gstList(b),
   tally_name: b.tally_name ?? null, manager_id: managerId ?? null, created_at: now(), created_by: by,
 });
 
@@ -170,7 +177,7 @@ adminRouter.post('/clients', requireRole('director', 'manager', 'employee'), h(a
   // Without one, no manager could see a client an employee added.
   if (req.user!.role === 'employee' && !managerId) throw new HttpError(400, 'Choose a relationship manager.');
   await checkManager(managerId);
-  await checkNotExisting(b.company.legal_name, b.company.gstin);
+  await checkNotExisting(b.company.legal_name, gstList(b.company));
   const contact = b.contact;
   const password = contact ? clientPassword(contact.password) : undefined;
   if (b.work_types.length) {
@@ -208,7 +215,7 @@ adminRouter.post('/clients/:groupId/companies', requireRole('director', 'manager
   }
   const managerId = b.manager_id ?? (req.user!.role === 'manager' ? req.user!.id : undefined);
   await checkManager(managerId);
-  await checkNotExisting(b.legal_name, b.gstin);
+  await checkNotExisting(b.legal_name, gstList(b));
   const companyId = newId();
   await db.collection(C.companies).doc(companyId).set(companyDoc(companyId, group.id, b, managerId, req.user!.id));
   await auditReq(req, { action: 'company.created', objectType: 'company', objectId: companyId, companyId });
@@ -254,6 +261,16 @@ adminRouter.post('/companies/:id/approval', requireRole('director', 'manager'), 
   res.json({ ok: true });
 }));
 
+/** Directors and managers keep a client's GST registrations, one per state; the first is the main one. */
+adminRouter.put('/companies/:id/gstins', requireRole('director', 'manager'), h(async (req, res) => {
+  const c = await assertCompany(req.user!, String(req.params.id));
+  const gstins = [...new Set(parse(z.object({ gstins: z.array(zGstin).max(40) }), req.body).gstins)];
+  await checkNotExisting(null, gstins, c.id);
+  await db.collection(C.companies).doc(c.id).update({ gstins, gstin: gstins[0] ?? null });
+  await auditReq(req, { action: 'company.gstins_set', objectType: 'company', objectId: c.id, companyId: c.id, details: { before: gstinsOf(c), after: gstins } });
+  res.json({ ok: true, gstins });
+}));
+
 /** The director deletes a client. Its files are kept, encrypted and out of reach, for the legal retention period. */
 adminRouter.delete('/companies/:id', requireRole('director'), h(async (req, res) => {
   const c = await getById<CompanyDoc>(C.companies, String(req.params.id));
@@ -276,7 +293,7 @@ adminRouter.get('/companies', requireAuth, h(async (req, res) => {
     .sort((a, b) => a.group_name.localeCompare(b.group_name) || a.legal_name.localeCompare(b.legal_name));
   // Clients and employees do not need internal fields.
   if (u.role === 'client' || u.role === 'employee') {
-    return res.json(visible.map(({ id, legal_name, group_name, gstin, work_types, approval }) => ({ id, legal_name, group_name, gstin, ...(u.role === 'employee' && { work_types: work_types ?? [], approval: approval ?? null }) })));
+    return res.json(visible.map((c) => ({ id: c.id, legal_name: c.legal_name, group_name: c.group_name, gstin: c.gstin, gstins: gstinsOf(c), ...(u.role === 'employee' && { work_types: c.work_types ?? [], approval: c.approval ?? null }) })));
   }
   const [users, pendingDocs, openTasks] = await Promise.all([
     userNames(),
@@ -285,7 +302,7 @@ adminRouter.get('/companies', requireAuth, h(async (req, res) => {
   ]);
   const count = (rows: { company_id: string }[], id: string) => rows.filter((r) => r.company_id === id).length;
   res.json(visible.map((c) => ({
-    id: c.id, legal_name: c.legal_name, pan: c.pan, gstin: c.gstin, tally_name: c.tally_name, group_id: c.group_id,
+    id: c.id, legal_name: c.legal_name, pan: c.pan, gstin: c.gstin, gstins: gstinsOf(c), tally_name: c.tally_name, group_id: c.group_id,
     group_name: c.group_name, manager_id: c.manager_id, manager_name: c.manager_id ? users.get(c.manager_id)?.name ?? null : null,
     pending_docs: count(pendingDocs, c.id), open_tasks: count(openTasks, c.id), work_types: c.work_types ?? [],
     approval: c.approval ?? null, added_by: c.created_by ? users.get(c.created_by)?.name ?? null : null,
@@ -300,7 +317,7 @@ adminRouter.get('/companies/:id', requireRole('director', 'manager'), h(async (r
     query<UserDoc>(C.users, { where: [['client_group_id', '==', c.group_id]] }),
   ]);
   res.json({
-    company: { ...c, group_name: group?.name ?? '', manager_name: manager?.name ?? null },
+    company: { ...c, gstins: gstinsOf(c), group_name: group?.name ?? '', manager_name: manager?.name ?? null },
     contacts: contacts.sort((a, b) => a.name.localeCompare(b.name)).map(({ id, name, mobile, email, status, username }) => ({ id, name, mobile, email, status, username: username ?? null })),
   });
 }));

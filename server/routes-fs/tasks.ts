@@ -1,6 +1,7 @@
 import { Router, type Request } from 'express';
 import { z } from 'zod';
-import { CLIENT_STATUS, TASK_TYPES, zDate, zId, zText } from '../shared.ts';
+import { CLIENT_STATUS, TASK_TYPES, zDate, zGstin, zId, zText } from '../shared.ts';
+import { checkGstin } from '../firestore/clients.ts';
 import { assertCompany, companyMap, companyScope, inScope, isTaskOwner, loadTask, userNames } from '../firestore/authz.ts';
 import { listCategories } from '../firestore/documents.ts';
 import { HttpError, auditReq, h, parse, requireAuth, requireRole } from '../firestore/http.ts';
@@ -83,7 +84,7 @@ tasksRouter.get('/tasks', requireAuth, h(async (req, res) => {
   for (const e of entries) if (e.task_id) logged.set(e.task_id, (logged.get(e.task_id) ?? 0) + workedSeconds(e));
   res.json(rows.map((t) => ({
     id: t.id, company_id: t.company_id, company: companies.get(t.company_id)?.legal_name, type: t.type, title: t.title,
-    period: t.period, status: t.status, priority: t.priority, due_date: t.due_date, statutory_due: t.statutory_due,
+    period: t.period, status: t.status, priority: t.priority, due_date: t.due_date, statutory_due: t.statutory_due, gstin: t.gstin ?? null,
     rework_count: t.rework_count, estimate_hours: t.estimate_hours, updated_at: t.updated_at, client_note: t.client_note,
     created_at: t.created_at, assignee: t.assignee_id ? users.get(t.assignee_id)?.name ?? null : null,
     reviewer: t.reviewer_id ? users.get(t.reviewer_id)?.name ?? null : null, assignee_id: t.assignee_id, reviewer_id: t.reviewer_id,
@@ -132,6 +133,7 @@ async function checkCategories(ids: string[]) {
 
 const taskFields = z.object({
   company_id: zId,
+  gstin: zGstin.optional(), // which state's registration, for a client with several
   type: z.enum(TASK_TYPES),
   title: zText(200).min(3),
   period: zText(40).optional(),
@@ -147,7 +149,7 @@ const taskFields = z.object({
 
 tasksRouter.post('/tasks', requireRole('director', 'manager'), h(async (req, res) => {
   const b = parse(taskFields, req.body);
-  await assertCompany(req.user!, b.company_id);
+  checkGstin(await assertCompany(req.user!, b.company_id), b.gstin);
   const reviewerId = b.reviewer_id ?? req.user!.id;
   await checkAssignee(b.assignee_id, reviewerId);
   if (b.grant_category_ids?.length) await checkCategories(b.grant_category_ids);
@@ -169,13 +171,14 @@ tasksRouter.post('/tasks', requireRole('director', 'manager'), h(async (req, res
 tasksRouter.post('/tasks/own', requireRole('employee'), h(async (req, res) => {
   const b = parse(z.object({
     company_id: zId, task_name_id: z.string().max(100), reviewer_id: zId, due_date: zDate.optional(), instructions: zText(4000).optional(),
+    gstin: zGstin.optional(),
   }), req.body);
-  await assertCompany(req.user!, b.company_id); // only a client they already work on
+  checkGstin(await assertCompany(req.user!, b.company_id), b.gstin); // only a client they already work on
   await checkAssignee(req.user!.id, b.reviewer_id);
   const title = await taskName(b.task_name_id);
   const taskId = await createTask({
     company_id: b.company_id, type: 'Other', title, assignee_id: req.user!.id, reviewer_id: b.reviewer_id,
-    due_date: b.due_date, instructions: b.instructions, created_by: req.user!.id,
+    due_date: b.due_date, instructions: b.instructions, gstin: b.gstin, created_by: req.user!.id,
   });
   await auditReq(req, { action: 'task.created', objectType: 'task', objectId: taskId, companyId: b.company_id, details: { assignee: req.user!.id, own: true, assigned_by: b.reviewer_id } });
   res.status(201).json({ id: taskId });

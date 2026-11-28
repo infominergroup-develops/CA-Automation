@@ -352,7 +352,7 @@ function Designations({ titles, staff, onChange }: { titles: Designation[]; staf
 }
 
 interface Person { id: string; name: string; role: string; status: string; email: string | null; username: string | null; group_name: string | null; rights: Rights; custom: boolean }
-const RIGHT_LABEL: Record<keyof Rights, string> = { view: 'View', edit: 'Review', move: 'Move files', download: 'Download', delete: 'Delete files', deleteFolder: 'Delete folders' };
+const RIGHT_LABEL: Record<keyof Rights, string> = { view: 'View', edit: 'Review', move: 'Move files', download: 'Download', downloadFolder: 'Download folders', delete: 'Delete files', deleteFolder: 'Delete folders' };
 const title = (role: string) => role[0].toUpperCase() + role.slice(1);
 
 /** The director changes staff roles and ticks what each person, staff or client, may do with files. */
@@ -409,8 +409,8 @@ function RolesAndRights({ onChange }: { onChange: () => void }) {
     <div className="space-y-6">
       <ErrorText error={err} />
       <Card title="Staff" padded={false}
-        description="Change someone's role, and tick what they may do with client files. View = open files in the portal; Review = accept a file or ask the client to re-upload it; Move files = move them to another year, folder or month; Download = save a copy; Delete files = remove a file; Delete folders = remove a folder with every file in it. Everyone can upload and make folders. Directors always have every right.">
-        <Table head={['Name', 'Role', 'View', 'Review', 'Move files', 'Download', 'Delete files', 'Delete folders', '']}>
+        description="Change someone's role, and tick what they may do with client files. View = open files in the portal; Review = accept a file or ask the client to re-upload it; Move files = move them to another year, folder or month; Download = save a copy; Download folders = save a whole folder as one .zip; Delete files = remove a file; Delete folders = remove a folder with every file in it. Everyone can upload and make folders. Directors always have every right.">
+        <Table head={['Name', 'Role', 'View', 'Review', 'Move files', 'Download', 'Download folders', 'Delete files', 'Delete folders', '']}>
           {staff.map((p) => (
             <tr key={p.id}>
               <Td><div className="font-semibold text-ink">{p.name}{p.id === me.id && <span className="text-xs font-normal text-slate-400"> (you)</span>}</div><div className="text-xs text-slate-500">{p.username ?? p.email}</div></Td>
@@ -419,7 +419,7 @@ function RolesAndRights({ onChange }: { onChange: () => void }) {
                   {['director', 'manager', 'employee'].map((r) => <option key={r} value={r}>{title(r)}</option>)}
                 </Select>
               </Td>
-              {(['view', 'edit', 'move', 'download', 'delete', 'deleteFolder'] as const).map((r) => box(p, r, p.role === 'director'))}
+              {(['view', 'edit', 'move', 'download', 'downloadFolder', 'delete', 'deleteFolder'] as const).map((r) => box(p, r, p.role === 'director'))}
               {resetCell(p)}
             </tr>
           ))}
@@ -434,12 +434,12 @@ function RolesAndRights({ onChange }: { onChange: () => void }) {
           </div>
         }>
         {!clients.length ? <EmptyState icon={Users} title={q ? 'Nothing matches' : 'No client logins yet'} /> : (
-          <Table head={['Name', 'Client', 'View', 'Download', 'Delete own uploads', '']}>
+          <Table head={['Name', 'Client', 'View', 'Download', 'Download folders', 'Delete own uploads', '']}>
             {clients.map((p) => (
               <tr key={p.id}>
                 <Td><div className="font-semibold text-ink">{p.name}</div><div className="text-xs text-slate-500">{p.username ?? p.email}</div></Td>
                 <Td className="text-slate-600">{p.group_name}</Td>
-                {(['view', 'download', 'delete'] as const).map((r) => box(p, r))}
+                {(['view', 'download', 'downloadFolder', 'delete'] as const).map((r) => box(p, r))}
                 {resetCell(p)}
               </tr>
             ))}

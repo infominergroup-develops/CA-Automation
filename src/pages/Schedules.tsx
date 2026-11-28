@@ -3,12 +3,14 @@ import { Link } from 'react-router-dom';
 import { BellRing, CalendarClock, CalendarPlus, CircleCheck, Hand, Trash2 } from 'lucide-react';
 import { api, fmtDate } from '../api';
 import { useUser } from '../auth';
+import { GstStateField } from '../components/GstStateField';
+import { stateOf } from '../gst';
 import {
   Badge, Button, Card, EmptyState, ErrorText, Field, Input, LoadingRows, PageHeader, Select, Table, Td, useAction, useConfirm, useLoad,
 } from '../components/ui';
 
 export interface Schedule {
-  id: string; company_id: string; company: string; task: string; repeat: 'monthly' | 'yearly';
+  id: string; company_id: string; company: string; task: string; gstin: string | null; repeat: 'monthly' | 'yearly';
   /** The run on now, or the next one. */
   run: { start: string; end: string };
   live: boolean; created_by_name: string;
@@ -49,7 +51,7 @@ export function Schedules() {
       {list.map((s) => (
         <tr key={s.id}>
           <Td className="font-semibold text-ink">{s.task || '—'}</Td>
-          <Td>{s.company}</Td>
+          <Td>{s.company}{s.gstin && <div className="text-xs text-slate-500">{stateOf(s.gstin)}</div>}</Td>
           <Td className="whitespace-nowrap tabular-nums">{runText(s)}</Td>
           <Td>{s.repeat === 'monthly' ? 'Every month' : 'Every year'}</Td>
           <Td><TakeButton s={s} onDone={reload} /></Td>
@@ -88,13 +90,13 @@ export function Schedules() {
 }
 
 function NewSchedule({ onDone }: { onDone: () => void }) {
-  const [companies, err] = useLoad(() => api<{ id: string; legal_name: string; approval?: string | null }[]>('/companies'));
+  const [companies, err] = useLoad(() => api<{ id: string; legal_name: string; approval?: string | null; gstins?: string[] }[]>('/companies'));
   const [tasks, err2] = useLoad(() => api<{ id: string; name: string }[]>('/task-names'));
-  const [f, setF] = useState({ task_name_id: '', company_id: '', start: '', end: '', repeat: 'monthly' });
+  const [f, setF] = useState({ task_name_id: '', company_id: '', gstin: '', start: '', end: '', repeat: 'monthly' });
   const { busy, run } = useAction();
   const ready = f.task_name_id && f.company_id && f.start && f.end && f.end >= f.start;
   const save = async () => {
-    if (await run(() => api('/schedules', { body: f }), 'Task scheduled')) { setF({ ...f, task_name_id: '', company_id: '', start: '', end: '' }); onDone(); }
+    if (await run(() => api('/schedules', { body: { ...f, gstin: f.gstin || undefined } }), 'Task scheduled')) { setF({ ...f, task_name_id: '', company_id: '', gstin: '', start: '', end: '' }); onDone(); }
   };
   return (
     <Card title="Schedule a task" description="The team is told on these dates, every month or every year.">
@@ -107,11 +109,12 @@ function NewSchedule({ onDone }: { onDone: () => void }) {
           </Select>
         </Field>
         <Field label="Client">
-          <Select value={f.company_id} onChange={(e) => setF({ ...f, company_id: e.target.value })}>
+          <Select value={f.company_id} onChange={(e) => setF({ ...f, company_id: e.target.value, gstin: '' })}>
             <option value="">Choose a client</option>
             {companies?.filter((c) => c.approval !== 'pending').map((c) => <option key={c.id} value={c.id}>{c.legal_name}</option>)}
           </Select>
         </Field>
+        <GstStateField gstins={companies?.find((c) => c.id === f.company_id)?.gstins} value={f.gstin} onChange={(gstin) => setF({ ...f, gstin })} />
         <div className="grid grid-cols-2 gap-3">
           <Field label="From"><Input type="date" value={f.start} onChange={(e) => setF({ ...f, start: e.target.value })} /></Field>
           <Field label="To"><Input type="date" value={f.end} min={f.start || undefined} onChange={(e) => setF({ ...f, end: e.target.value })} /></Field>
@@ -143,7 +146,7 @@ export function SchedulesOnNow() {
             {s.taken ? <CircleCheck className="size-4 text-emerald-600 shrink-0" aria-hidden /> : <CalendarClock className="size-4 text-amber-600 shrink-0" aria-hidden />}
             <span className="flex-1 min-w-40">
               <span className="block text-sm font-semibold text-ink">{s.task ? `${s.task} · ` : ''}{s.company}</span>
-              <span className="block text-xs text-slate-500 tabular-nums">{runText(s)} · {s.repeat === 'monthly' ? 'every month' : 'every year'}</span>
+              <span className="block text-xs text-slate-500 tabular-nums">{runText(s)} · {s.repeat === 'monthly' ? 'every month' : 'every year'}{s.gstin ? ` · ${stateOf(s.gstin)}` : ''}</span>
             </span>
             <TakeButton s={s} onDone={reload} />
           </li>

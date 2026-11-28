@@ -83,6 +83,7 @@ const NO_RIGHT: Record<Right, string> = {
   edit: 'Reviewing files is turned off for you. Ask a director.',
   move: 'Moving files is turned off for you. Ask a director.',
   download: 'Downloading files is turned off for you. Ask a director.',
+  downloadFolder: 'Downloading whole folders is turned off for you. Ask a director.',
   delete: 'You cannot delete this document.',
   deleteFolder: 'Deleting folders is turned off for you. Ask a director.',
 };

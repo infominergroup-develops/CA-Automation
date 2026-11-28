@@ -6,6 +6,15 @@ import { TaskConflictError, cancelTask } from './tasks.ts';
 import { C, type CompanyDoc, type TaskDoc, type UserDoc } from './types.ts';
 import { setUserStatus } from './users.ts';
 import type { ScheduleDoc } from './schedules.ts';
+import { HttpError } from './http.ts';
+
+/** A client's GST registrations; older records have only the one in `gstin`. */
+export const gstinsOf = (c: Pick<CompanyDoc, 'gstin' | 'gstins'>): string[] => (c.gstins?.length ? c.gstins : c.gstin ? [c.gstin] : []);
+
+/** 400 unless the GSTIN is one of this client's registrations. */
+export function checkGstin(c: CompanyDoc, gstin: string | undefined | null) {
+  if (gstin && !gstinsOf(c).includes(gstin)) throw new HttpError(400, 'That GST number is not one of this client\'s registrations.');
+}
 
 /**
  * Takes a client out of the portal: deleted by a director, or not approved. The record moves to deleted_companies,

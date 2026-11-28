@@ -55,6 +55,8 @@ export interface CompanyDoc {
   created_by: string | null;
   /** Work type ids from the client master. */
   work_types?: string[];
+  /** Every GST registration, one per state (the state is the GSTIN's first two digits). `gstin` is the first of them. */
+  gstins?: string[];
   /** Added by an employee: waits for its manager or a director. Files, tasks and the client's login stay closed until then. */
   approval?: 'pending' | null;
   approved_by?: string; approved_at?: string;
@@ -152,6 +154,8 @@ export interface TaskDoc {
   created_by: string;
   due_date: string | null;
   statutory_due: string | null;
+  /** Which of the client's GST registrations (state) the task is for, when it is for one. */
+  gstin?: string | null;
   priority: 'low' | 'normal' | 'high' | 'urgent';
   status: TaskStatus;
   estimate_hours: number | null;

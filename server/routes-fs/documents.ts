@@ -8,8 +8,9 @@ import { config } from '../config.ts';
 import { cleanName, detectFileType, zFy, zText } from '../shared.ts';
 import { assertCompany, canViewDocument, inScope, userNames } from '../firestore/authz.ts';
 import {
-  IntegrityError, cleanSubfolder, createDocument, folderPath, docFolder, moveDocument, getDocumentMeta, listCategories, listDocuments, reviewDocument, sendDocument, softDeleteDocument,
+  IntegrityError, cleanSubfolder, createDocument, folderPath, docFolder, moveDocument, getDocumentMeta, listCategories, listDocuments, reviewDocument, sendDocument, softDeleteDocument, streamDocument,
 } from '../firestore/documents.ts';
+import { ZipWriter } from '../zip.ts';
 import { HttpError, auditReq, can, h, noRight, parse, requireAuth, requireRight } from '../firestore/http.ts';
 
 export const documentsRouter = Router();
@@ -174,17 +175,58 @@ documentsRouter.delete('/documents/:id', requireRight('delete'), h(async (req, r
  * Deletes a folder (any depth below a year, or a whole year) with every file in it. Soft delete, like single files: the
  * encrypted files are kept for retention. Needs the "delete folders" right.
  */
+/** The files in a folder of a year (or the whole year), at any depth, by the same folder paths the file manager shows. */
+async function filesInFolder(companyId: string, fy: string, folder: string) {
+  const path = folder.split('/').filter(Boolean).join('/');
+  const name = new Map((await listCategories()).map((c) => [c.id, c.name]));
+  const inside = (await listDocuments(companyId)).map((d) => ({ d, p: folderPath(d, (id) => name.get(id) ?? id) }))
+    .filter(({ d, p }) => d.fy === fy && (!path || p === path || p.startsWith(`${path}/`)));
+  return { path, inside };
+}
+
+/** Saves a whole folder (or year) as one .zip, its inner folders kept. Streamed, so any size works. */
+documentsRouter.get('/companies/:companyId/folders/download', requireRight('downloadFolder'), h(async (req, res) => {
+  const companyId = String(req.params.companyId);
+  const company = await assertCompany(req.user!, companyId);
+  const q = parse(z.object({ fy: zFy, path: z.string().max(2000).default('') }), req.query);
+  const { path, inside } = await filesInFolder(companyId, q.fy, q.path);
+  if (!inside.length) throw new HttpError(404, 'This folder has no files.');
+  await auditReq(req, { action: 'folder.downloaded', objectType: 'folder', companyId,
+    details: { fy: q.fy, path, files: inside.length, document_ids: inside.map(({ d }) => d.id) } });
+  const zipName = `${company.legal_name} FY ${q.fy}${path ? ` ${path.split('/').pop()}` : ''}.zip`;
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(zipName)}`);
+  res.setHeader('Cache-Control', 'no-store');
+  const stop = new AbortController();
+  res.once('close', () => stop.abort());
+  const zip = new ZipWriter(res);
+  const used = new Set<string>();
+  for (const { d, p } of inside) {
+    const doc = await getDocumentMeta(d.id);
+    if (!doc) continue;
+    // Inside the zip: the folders below the one downloaded, then the file's own name (numbered if it repeats).
+    const dir = (path ? p.slice(path.length) : p).split('/').filter(Boolean).join('/');
+    let entry = dir ? `${dir}/${doc.original_name}` : doc.original_name;
+    for (let n = 2; used.has(entry.toLowerCase()); n++) entry = (dir ? `${dir}/` : '') + doc.original_name.replace(/(\.[^.]*)?$/, ` (${n})$1`);
+    used.add(entry.toLowerCase());
+    try {
+      await zip.add(entry, doc.size, new Date(doc.created_at), (sink) => streamDocument(doc, sink.write, stop.signal));
+    } catch (e) {
+      if (stop.signal.aborted) return; // the browser went away
+      if (e instanceof IntegrityError) await auditReq(req, { action: 'document.integrity_failure', objectType: 'document', objectId: doc.id, companyId });
+      else console.error(`[${new Date().toISOString()}] folder download`, e);
+      return void res.destroy(); // cut off: an unfinished zip never opens as if it were whole
+    }
+  }
+  await zip.finish();
+}));
+
 documentsRouter.post('/companies/:companyId/folders/delete', requireRight('deleteFolder'), h(async (req, res) => {
   const companyId = String(req.params.companyId);
   await assertCompany(req.user!, companyId);
   const b = parse(z.object({ fy: zFy, path: z.string().max(2000).default('') }), req.body);
-  const path = b.path.split('/').filter(Boolean).join('/');
-  const name = new Map((await listCategories()).map((c) => [c.id, c.name]));
-  // The same folder paths the file manager shows.
-  const inside = (await listDocuments(companyId)).filter((d) => {
-    const p = folderPath(d, (id) => name.get(id) ?? id);
-    return d.fy === b.fy && (!path || p === path || p.startsWith(`${path}/`));
-  });
+  const { path, inside: found } = await filesInFolder(companyId, b.fy, b.path);
+  const inside = found.map(({ d }) => d);
   await Promise.all(inside.map((d) => softDeleteDocument(d.id, req.user!.id)));
   await auditReq(req, { action: 'folder.deleted', objectType: 'folder', companyId,
     details: { fy: b.fy, path, files: inside.length, document_ids: inside.map((d) => d.id) } });

@@ -12,7 +12,7 @@ export interface SessionUser {
   email: string | null;
   mobile: string | null;
   /** Set by the Firestore server only (file rights); see server/firestore/rights.ts. */
-  rights?: Record<'view' | 'edit' | 'move' | 'download' | 'delete' | 'deleteFolder', boolean>;
+  rights?: Record<'view' | 'edit' | 'move' | 'download' | 'downloadFolder' | 'delete' | 'deleteFolder', boolean>;
   client_group_id: string | null;
   monitoring_notice_ack_at: string | null;
 }
