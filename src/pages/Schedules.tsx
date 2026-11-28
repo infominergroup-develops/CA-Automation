@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { BellRing, CalendarClock, CalendarPlus, CircleCheck, Hand, Trash2 } from 'lucide-react';
 import { api, fmtDate } from '../api';
 import { useUser } from '../auth';
@@ -7,7 +8,7 @@ import {
 } from '../components/ui';
 
 export interface Schedule {
-  id: string; company_id: string; company: string; repeat: 'monthly' | 'yearly';
+  id: string; company_id: string; company: string; task: string; repeat: 'monthly' | 'yearly';
   /** The run on now, or the next one. */
   run: { start: string; end: string };
   live: boolean; created_by_name: string;
@@ -25,7 +26,7 @@ function TakeButton({ s, onDone }: { s: Schedule; onDone: () => void }) {
   if (s.taken) {
     return <Badge tone={s.taken.by === me.id ? 'green' : 'slate'} dot>{s.taken.by === me.id ? 'Taken by you' : `Taken by ${s.taken.name}`}</Badge>;
   }
-  const take = () => run(() => api(`/schedules/${s.id}/take`, { body: {} }), `You have taken ${s.company}`).then(() => { changed(); onDone(); });
+  const take = () => run(() => api(`/schedules/${s.id}/take`, { body: {} }), `You have taken ${s.task || s.company}`).then(() => { changed(); onDone(); });
   return <Button size="sm" icon={Hand} busy={busy} onClick={take}>Take it</Button>;
 }
 
@@ -44,10 +45,11 @@ export function Schedules() {
   const later = rows?.filter((s) => !s.live) ?? [];
 
   const table = (list: Schedule[]) => (
-    <Table head={['Client', 'Dates', 'Repeats', 'Who has it', ...(planner ? [''] : [])]} label="Scheduled tasks">
+    <Table head={['Task', 'Client', 'Dates', 'Repeats', 'Who has it', ...(planner ? [''] : [])]} label="Scheduled tasks">
       {list.map((s) => (
         <tr key={s.id}>
-          <Td className="font-semibold text-ink">{s.company}</Td>
+          <Td className="font-semibold text-ink">{s.task || '—'}</Td>
+          <Td>{s.company}</Td>
           <Td className="whitespace-nowrap tabular-nums">{runText(s)}</Td>
           <Td>{s.repeat === 'monthly' ? 'Every month' : 'Every year'}</Td>
           <Td><TakeButton s={s} onDone={reload} /></Td>
@@ -86,21 +88,28 @@ export function Schedules() {
 }
 
 function NewSchedule({ onDone }: { onDone: () => void }) {
-  const [companies, err] = useLoad(() => api<{ id: string; legal_name: string }[]>('/companies'));
-  const [f, setF] = useState({ company_id: '', start: '', end: '', repeat: 'monthly' });
+  const [companies, err] = useLoad(() => api<{ id: string; legal_name: string; approval?: string | null }[]>('/companies'));
+  const [tasks, err2] = useLoad(() => api<{ id: string; name: string }[]>('/task-names'));
+  const [f, setF] = useState({ task_name_id: '', company_id: '', start: '', end: '', repeat: 'monthly' });
   const { busy, run } = useAction();
-  const ready = f.company_id && f.start && f.end && f.end >= f.start;
+  const ready = f.task_name_id && f.company_id && f.start && f.end && f.end >= f.start;
   const save = async () => {
-    if (await run(() => api('/schedules', { body: f }), 'Task scheduled')) { setF({ ...f, company_id: '', start: '', end: '' }); onDone(); }
+    if (await run(() => api('/schedules', { body: f }), 'Task scheduled')) { setF({ ...f, task_name_id: '', company_id: '', start: '', end: '' }); onDone(); }
   };
   return (
     <Card title="Schedule a task" description="The team is told on these dates, every month or every year.">
       <div className="space-y-4">
-        <ErrorText error={err} />
+        <ErrorText error={err || err2} />
+        <Field label="Task" hint={<>Missing one? Add it in <Link to="/master?tab=tasks" className="underline">Masters</Link>.</>}>
+          <Select value={f.task_name_id} onChange={(e) => setF({ ...f, task_name_id: e.target.value })}>
+            <option value="">Choose a task</option>
+            {tasks?.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+          </Select>
+        </Field>
         <Field label="Client">
           <Select value={f.company_id} onChange={(e) => setF({ ...f, company_id: e.target.value })}>
             <option value="">Choose a client</option>
-            {companies?.map((c) => <option key={c.id} value={c.id}>{c.legal_name}</option>)}
+            {companies?.filter((c) => c.approval !== 'pending').map((c) => <option key={c.id} value={c.id}>{c.legal_name}</option>)}
           </Select>
         </Field>
         <div className="grid grid-cols-2 gap-3">
@@ -133,7 +142,7 @@ export function SchedulesOnNow() {
           <li key={s.id} className="flex flex-wrap items-center gap-3 px-5 py-3">
             {s.taken ? <CircleCheck className="size-4 text-emerald-600 shrink-0" aria-hidden /> : <CalendarClock className="size-4 text-amber-600 shrink-0" aria-hidden />}
             <span className="flex-1 min-w-40">
-              <span className="block text-sm font-semibold text-ink">{s.company}</span>
+              <span className="block text-sm font-semibold text-ink">{s.task ? `${s.task} · ` : ''}{s.company}</span>
               <span className="block text-xs text-slate-500 tabular-nums">{runText(s)} · {s.repeat === 'monthly' ? 'every month' : 'every year'}</span>
             </span>
             <TakeButton s={s} onDone={reload} />

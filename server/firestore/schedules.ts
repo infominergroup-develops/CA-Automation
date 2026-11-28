@@ -9,6 +9,8 @@ import { C } from './types.ts';
 export type Repeat = 'monthly' | 'yearly';
 export interface ScheduleDoc {
   id: string; company_id: string; repeat: Repeat;
+  /** From the task names in Masters, kept as written then. Older schedules have none. */
+  task?: string;
   /** The first run, YYYY-MM-DD, both days included. Later runs keep the same days of the month. */
   start: string; end: string;
   active: boolean; created_by: string; created_at: string; ended_by?: string; ended_at?: string;
@@ -43,9 +45,9 @@ export function runOn(s: Pick<ScheduleDoc, 'start' | 'end' | 'repeat'>, day: str
   return { start: addMonths(s.start, k * step(s.repeat)), end: addMonths(s.end, k * step(s.repeat)) };
 }
 
-export async function createSchedule(b: { companyId: string; start: string; end: string; repeat: Repeat; createdBy: string }): Promise<string> {
+export async function createSchedule(b: { companyId: string; task: string; start: string; end: string; repeat: Repeat; createdBy: string }): Promise<string> {
   const id = newId();
-  const doc: ScheduleDoc = { id, company_id: b.companyId, repeat: b.repeat, start: b.start, end: b.end, active: true, created_by: b.createdBy, created_at: now() };
+  const doc: ScheduleDoc = { id, company_id: b.companyId, task: b.task, repeat: b.repeat, start: b.start, end: b.end, active: true, created_by: b.createdBy, created_at: now() };
   await db.collection(C.schedules).doc(id).set(doc);
   return id;
 }

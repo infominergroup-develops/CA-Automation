@@ -10,6 +10,7 @@ import {
   grantsForTask, rejectTask, requestAccess, revokeGrant, startTask, submitTask,
 } from '../firestore/tasks.ts';
 import { taskSeconds, workedSeconds } from '../firestore/time.ts';
+import { taskName } from './master.ts';
 import { getUserById } from '../firestore/users.ts';
 import { C, type AccessGrantDoc, type TaskDoc, type TaskStatus, type TimeEntryDoc } from '../firestore/types.ts';
 
@@ -70,6 +71,7 @@ tasksRouter.get('/tasks', requireAuth, h(async (req, res) => {
     || (a.due_date ?? '9999').localeCompare(b.due_date ?? '9999') || b.updated_at.localeCompare(a.updated_at)).slice(0, 500);
 
   const companies = await companyMap();
+  rows = rows.filter((t) => companies.has(t.company_id)); // a deleted client's tasks leave the lists
   if (u.role === 'client') return res.json(rows.map((t) => clientView(t, companies.get(t.company_id)?.legal_name)));
 
   const [users, entries] = await Promise.all([
@@ -157,6 +159,25 @@ tasksRouter.post('/tasks', requireRole('director', 'manager'), h(async (req, res
       details: { taskId, employeeId: b.assignee_id, categoryIds: b.grant_category_ids } });
   }
   await auditReq(req, { action: 'task.created', objectType: 'task', objectId: taskId, companyId: b.company_id, details: { assignee: b.assignee_id } });
+  res.status(201).json({ id: taskId });
+}));
+
+/**
+ * An employee adds work they were given: the client, the task (from the list in Masters) and who gave it to them.
+ * It is theirs to do, and that person approves it when they submit it, as with any task.
+ */
+tasksRouter.post('/tasks/own', requireRole('employee'), h(async (req, res) => {
+  const b = parse(z.object({
+    company_id: zId, task_name_id: z.string().max(100), reviewer_id: zId, due_date: zDate.optional(), instructions: zText(4000).optional(),
+  }), req.body);
+  await assertCompany(req.user!, b.company_id); // only a client they already work on
+  await checkAssignee(req.user!.id, b.reviewer_id);
+  const title = await taskName(b.task_name_id);
+  const taskId = await createTask({
+    company_id: b.company_id, type: 'Other', title, assignee_id: req.user!.id, reviewer_id: b.reviewer_id,
+    due_date: b.due_date, instructions: b.instructions, created_by: req.user!.id,
+  });
+  await auditReq(req, { action: 'task.created', objectType: 'task', objectId: taskId, companyId: b.company_id, details: { assignee: req.user!.id, own: true, assigned_by: b.reviewer_id } });
   res.status(201).json({ id: taskId });
 }));
 

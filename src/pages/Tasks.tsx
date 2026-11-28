@@ -121,7 +121,7 @@ export function Tasks() {
                 <option value="all">All my clients</option><option value="mine">Assigned to me</option>
               </Select>
             )}
-            {u.role !== 'employee' && <Button icon={Plus} onClick={() => set('new', '1')}>New task</Button>}
+            <Button icon={Plus} onClick={() => set('new', '1')}>{u.role === 'employee' ? 'Add my task' : 'New task'}</Button>
           </>
         } />
       <Tabs value={filter} onChange={(v) => set('filter', v)} items={[
@@ -134,8 +134,57 @@ export function Tasks() {
       <Card padded={false}>
         {err ? <div className="p-5"><ErrorText error={err} /></div> : loading && !rows ? <div className="p-5"><LoadingRows /></div> : rows && <TaskTable rows={rows.filter(FILTERS[filter])} onChanged={reload} />}
       </Card>
-      {creating && <TaskForm onClose={() => set('new', null)} onDone={() => { set('new', null); reload(); }} />}
+      {creating && (u.role === 'employee'
+        ? <OwnTaskForm onClose={() => set('new', null)} onDone={() => { set('new', null); reload(); }} />
+        : <TaskForm onClose={() => set('new', null)} onDone={() => { set('new', null); reload(); }} />)}
     </>
+  );
+}
+
+/** An employee adds work they were given; whoever gave it approves it once it is submitted. */
+function OwnTaskForm({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
+  const toast = useToast();
+  const [companies] = useLoad(() => api<{ id: string; legal_name: string; approval?: string | null }[]>('/companies'));
+  const [names] = useLoad(() => api<{ id: string; name: string }[]>('/task-names'));
+  const [staff] = useLoad(() => api<StaffUser[]>('/users'));
+  const [f, setF] = useState({ company_id: '', task_name_id: '', reviewer_id: '', due_date: '' });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<unknown>();
+  const bosses = staff?.filter((s) => s.status === 'active' && (s.role === 'manager' || s.role === 'director'));
+  const save = async () => {
+    setBusy(true); setErr(undefined);
+    try {
+      await api('/tasks/own', { body: { ...f, due_date: f.due_date || undefined } });
+      toast('Task added. Once you submit it, the person who gave it to you approves it.');
+      onDone();
+    } catch (e) { setErr(e); } finally { setBusy(false); }
+  };
+  return (
+    <Modal title="Add my task" description="Work someone gave you. When you finish and submit it, they approve it." onClose={onClose}
+      footer={<><Button variant="ghost" onClick={onClose}>Cancel</Button><Button busy={busy} disabled={!f.company_id || !f.task_name_id || !f.reviewer_id} onClick={save}>Add task</Button></>}>
+      <div className="space-y-4">
+        <ErrorText error={err} />
+        <Field label="Client" hint="Clients you work on.">
+          <Select value={f.company_id} onChange={(e) => setF({ ...f, company_id: e.target.value })}>
+            <option value="">Choose a client</option>
+            {companies?.filter((c) => c.approval !== 'pending').map((c) => <option key={c.id} value={c.id}>{c.legal_name}</option>)}
+          </Select>
+        </Field>
+        <Field label="Task">
+          <Select value={f.task_name_id} onChange={(e) => setF({ ...f, task_name_id: e.target.value })}>
+            <option value="">Choose a task</option>
+            {names?.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+          </Select>
+        </Field>
+        <Field label="Assigned by" hint="They approve it when you are done.">
+          <Select value={f.reviewer_id} onChange={(e) => setF({ ...f, reviewer_id: e.target.value })}>
+            <option value="">Choose who gave it to you</option>
+            {bosses?.map((s) => <option key={s.id} value={s.id}>{s.name} · {s.role === 'director' ? 'Director' : 'Manager'}</option>)}
+          </Select>
+        </Field>
+        <Field label="Due date" optional><Input type="date" value={f.due_date} onChange={(e) => setF({ ...f, due_date: e.target.value })} /></Field>
+      </div>
+    </Modal>
   );
 }
 

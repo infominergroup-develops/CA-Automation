@@ -53,7 +53,9 @@ dashboardRouter.get('/dashboard', h(async (req, res) => {
       return u.role === 'director' || (t && (t.reviewer_id === u.id || t.created_by === u.id));
     }).length : 0,
     clientRequests: staff ? open.filter((t) => t.status === 'requested' && inScope(t.company_id)).length : 0,
-    pendingDocs: pendingDocs.filter((d) => inScope(d.company_id)).length,
+    pendingDocs: pendingDocs.filter((d) => inScope(d.company_id) && companies.has(d.company_id)).length,
+    // New clients an employee added, waiting on this person: their own clients for a manager, all for a director.
+    clientApprovals: staff ? [...companies.values()].filter((c) => c.approval === 'pending' && (u.role === 'director' || c.manager_id === u.id)).length : 0,
     overdue: working.filter((t) => t.due_date && t.due_date < today).length,
     privacyOpen: privacy.length,
     scheduledNow: schedules.filter((s) => s.live && !s.taken).length, // on now and nobody has taken it: the whole team is told

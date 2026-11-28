@@ -4,7 +4,8 @@ import { z } from 'zod';
 import { config } from '../config.ts';
 import { zEmail, zGstin, zId, zMobile, zPan, zText, zUsername } from '../shared.ts';
 import { passwordProblem } from '../security/crypto.ts';
-import { assertCompany, companyScope, userNames } from '../firestore/authz.ts';
+import { assertCompany, companyScope, inScope, userNames } from '../firestore/authz.ts';
+import { approveCompany, archiveCompany } from '../firestore/clients.ts';
 import { db } from '../firestore/client.ts';
 import { HttpError, auditReq, h, parse, requireAuth, requireRole, type SessionUser } from '../firestore/http.ts';
 import { endAllSessions } from '../firestore/sessions.ts';
@@ -118,13 +119,18 @@ const contactFields = z.object({
   username: zUsername.optional().or(z.literal('').transform(() => undefined)), // made from the email when left out
 });
 
-/** Each client's files live in a bucket folder named after it, so two clients may not share a folder name. */
+/**
+ * A client is added once: no other client may have the same name (it is also the client's bucket folder) or GST number.
+ * Deleted clients do not count, so one can be added again.
+ */
 // shortcut: check-then-write, so two simultaneous creates could both pass; reserve the name in a transaction if that ever matters.
-async function checkFolderName(legalName: string) {
+async function checkNotExisting(legalName: string, gstin: string | undefined) {
   const folder = segment(legalName).toLowerCase();
-  if ((await query<CompanyDoc>(C.companies)).some((c) => segment(c.legal_name).toLowerCase() === folder)) {
-    throw new HttpError(409, 'Another client already has this name. Add something to tell them apart, such as the city.');
-  }
+  const all = await query<CompanyDoc>(C.companies);
+  const sameName = all.find((c) => segment(c.legal_name).toLowerCase() === folder);
+  if (sameName) throw new HttpError(409, `This client already exists: ${sameName.legal_name}.`);
+  const sameGst = gstin && all.find((c) => c.gstin === gstin);
+  if (sameGst) throw new HttpError(409, `A client with this GST number already exists: ${sameGst.legal_name}.`);
 }
 
 /** While OTP is off a client signs in with the password the firm sets, so it is required and must be strong. */
@@ -164,7 +170,7 @@ adminRouter.post('/clients', requireRole('director', 'manager', 'employee'), h(a
   // Without one, no manager could see a client an employee added.
   if (req.user!.role === 'employee' && !managerId) throw new HttpError(400, 'Choose a relationship manager.');
   await checkManager(managerId);
-  await checkFolderName(b.company.legal_name);
+  await checkNotExisting(b.company.legal_name, b.company.gstin);
   const contact = b.contact;
   const password = contact ? clientPassword(contact.password) : undefined;
   if (b.work_types.length) {
@@ -178,12 +184,18 @@ adminRouter.post('/clients', requireRole('director', 'manager', 'employee'), h(a
       .catch((e) => duplicate(e, 'This username is taken. Choose another.'))
     : null;
   const userId = login?.id ?? null;
+  // An employee's new client waits for its manager or a director; its login stays off until then.
+  const pending = req.user!.role === 'employee';
+  if (pending && userId) {
+    await setUserStatus(userId, 'disabled');
+    await db.collection(C.users).doc(userId).update({ awaiting_approval: true });
+  }
   const batch = db.batch();
   batch.set(db.collection(C.clientGroups).doc(groupId), { id: groupId, name: b.group_name, created_at: now(), created_by: req.user!.id } satisfies ClientGroupDoc);
-  batch.set(db.collection(C.companies).doc(companyId), { ...companyDoc(companyId, groupId, b.company, managerId, req.user!.id), work_types: b.work_types });
+  batch.set(db.collection(C.companies).doc(companyId), { ...companyDoc(companyId, groupId, b.company, managerId, req.user!.id), work_types: b.work_types, ...(pending && { approval: 'pending' as const }) });
   await batch.commit();
-  await auditReq(req, { action: 'client.created', objectType: 'client_group', objectId: groupId, companyId, details: { login: !!contact, work_types: b.work_types } });
-  res.status(201).json({ groupId, companyId, userId, username: login?.username ?? null });
+  await auditReq(req, { action: 'client.created', objectType: 'client_group', objectId: groupId, companyId, details: { login: !!contact, work_types: b.work_types, pending } });
+  res.status(201).json({ groupId, companyId, userId, username: login?.username ?? null, pending });
 }));
 
 adminRouter.post('/clients/:groupId/companies', requireRole('director', 'manager'), h(async (req, res) => {
@@ -196,7 +208,7 @@ adminRouter.post('/clients/:groupId/companies', requireRole('director', 'manager
   }
   const managerId = b.manager_id ?? (req.user!.role === 'manager' ? req.user!.id : undefined);
   await checkManager(managerId);
-  await checkFolderName(b.legal_name);
+  await checkNotExisting(b.legal_name, b.gstin);
   const companyId = newId();
   await db.collection(C.companies).doc(companyId).set(companyDoc(companyId, group.id, b, managerId, req.user!.id));
   await auditReq(req, { action: 'company.created', objectType: 'company', objectId: companyId, companyId });
@@ -229,6 +241,28 @@ adminRouter.post('/users/:id/password', requireRole('director', 'manager'), h(as
   res.json({ ok: true });
 }));
 
+/** The client's manager or a director approves a client an employee added, or turns it down (it is then removed). */
+adminRouter.post('/companies/:id/approval', requireRole('director', 'manager'), h(async (req, res) => {
+  const { decision } = parse(z.object({ decision: z.enum(['approve', 'reject']) }), req.body);
+  const c = await getById<CompanyDoc>(C.companies, String(req.params.id));
+  if (!c || !(await inScope(req.user!, c.id))) throw new HttpError(404, 'Not found.');
+  if (c.approval !== 'pending') throw new HttpError(409, 'This client is not waiting for approval.');
+  if (req.user!.role === 'manager' && c.manager_id !== req.user!.id) throw new HttpError(403, 'Only this client\'s manager or a director can decide.');
+  if (decision === 'approve') await approveCompany(c, req.user!.id);
+  else await archiveCompany(c, req.user!.id, 'not_approved');
+  await auditReq(req, { action: decision === 'approve' ? 'client.approved' : 'client.rejected', objectType: 'company', objectId: c.id, companyId: c.id, details: { name: c.legal_name } });
+  res.json({ ok: true });
+}));
+
+/** The director deletes a client. Its files are kept, encrypted and out of reach, for the legal retention period. */
+adminRouter.delete('/companies/:id', requireRole('director'), h(async (req, res) => {
+  const c = await getById<CompanyDoc>(C.companies, String(req.params.id));
+  if (!c) throw new HttpError(404, 'Not found.');
+  await archiveCompany(c, req.user!.id, 'deleted');
+  await auditReq(req, { action: 'client.deleted', objectType: 'company', objectId: c.id, companyId: c.id, details: { name: c.legal_name, gstin: c.gstin } });
+  res.json({ ok: true });
+}));
+
 adminRouter.get('/companies', requireAuth, h(async (req, res) => {
   const u = req.user!;
   const scope = await companyScope(u);
@@ -242,7 +276,7 @@ adminRouter.get('/companies', requireAuth, h(async (req, res) => {
     .sort((a, b) => a.group_name.localeCompare(b.group_name) || a.legal_name.localeCompare(b.legal_name));
   // Clients and employees do not need internal fields.
   if (u.role === 'client' || u.role === 'employee') {
-    return res.json(visible.map(({ id, legal_name, group_name, gstin, work_types }) => ({ id, legal_name, group_name, gstin, ...(u.role === 'employee' && { work_types: work_types ?? [] }) })));
+    return res.json(visible.map(({ id, legal_name, group_name, gstin, work_types, approval }) => ({ id, legal_name, group_name, gstin, ...(u.role === 'employee' && { work_types: work_types ?? [], approval: approval ?? null }) })));
   }
   const [users, pendingDocs, openTasks] = await Promise.all([
     userNames(),
@@ -254,6 +288,7 @@ adminRouter.get('/companies', requireAuth, h(async (req, res) => {
     id: c.id, legal_name: c.legal_name, pan: c.pan, gstin: c.gstin, tally_name: c.tally_name, group_id: c.group_id,
     group_name: c.group_name, manager_id: c.manager_id, manager_name: c.manager_id ? users.get(c.manager_id)?.name ?? null : null,
     pending_docs: count(pendingDocs, c.id), open_tasks: count(openTasks, c.id), work_types: c.work_types ?? [],
+    approval: c.approval ?? null, added_by: c.created_by ? users.get(c.created_by)?.name ?? null : null,
   })));
 }));
 

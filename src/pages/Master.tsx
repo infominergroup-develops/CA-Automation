@@ -14,10 +14,20 @@ interface ClientSet { id: string; name: string; company_ids: string[]; member_id
 interface Staff { id: string; name: string; role: string; status: string; client_ids?: string[]; designation_id?: string | null; all_clients?: boolean }
 interface Designation { id: string; name: string }
 
-/** Director's masters: what work we do for each client, which staff see which clients, staff designations, and roles and file rights. */
+/** Directors see every master; managers only the task names, which they keep too. */
 export function ClientMaster() {
+  return useUser().role === 'director' ? <DirectorMasters /> : (
+    <>
+      <PageHeader title="Masters" subtitle="Task names to pick from when scheduling work and when employees add their own tasks." />
+      <TaskNames />
+    </>
+  );
+}
+
+/** Director's masters: what work we do for each client, which staff see which clients, staff designations, and roles and file rights. */
+function DirectorMasters() {
   const [params, setParams] = useSearchParams();
-  const tab = (params.get('tab') ?? 'work') as 'work' | 'groups' | 'staff' | 'titles' | 'rights';
+  const tab = (params.get('tab') ?? 'work') as 'work' | 'tasks' | 'groups' | 'staff' | 'titles' | 'rights';
   const [clients, e1, reloadClients] = useLoad(() => api<Client[]>('/companies'));
   const [types, e2, reloadTypes] = useLoad(() => api<WorkType[]>('/work-types'));
   const [sets, e3, reloadSets] = useLoad(() => api<ClientSet[]>('/client-sets'));
@@ -31,6 +41,7 @@ export function ClientMaster() {
       <ErrorText error={e1 || e2 || e3 || e4 || e5} />
       <Tabs value={tab} onChange={(t) => setParams({ tab: t }, { replace: true })} items={[
         { value: 'work', label: 'Work types' },
+        { value: 'tasks', label: 'Task names' },
         { value: 'groups', label: 'Client groups', count: sets?.length },
         { value: 'staff', label: 'Client access' },
         { value: 'titles', label: 'Designations', count: titles?.length },
@@ -38,6 +49,7 @@ export function ClientMaster() {
       ]} />
       {!ready ? <LoadingRows rows={6} />
         : tab === 'work' ? <WorkTypes clients={clients} types={types} onChange={() => { reloadClients(); reloadTypes(); }} />
+          : tab === 'tasks' ? <TaskNames />
           : tab === 'groups' ? <Groups clients={clients} sets={sets} team={team} onChange={reloadSets} />
             : tab === 'staff' ? <EmployeeAccess clients={clients} sets={sets} staff={staff.filter((s) => (s.role === 'employee' || s.role === 'manager') && s.status === 'active')} onChange={reloadStaff} />
               : tab === 'titles' ? <Designations titles={titles} staff={staff.filter((s) => s.status === 'active')} onChange={() => { reloadTitles(); reloadStaff(); }} />
@@ -435,5 +447,46 @@ function RolesAndRights({ onChange }: { onChange: () => void }) {
         )}
       </Card>
     </div>
+  );
+}
+
+interface TaskName { id: string; name: string }
+
+/** The list of task names used by scheduled tasks and employees' own tasks. Directors and managers keep it. */
+function TaskNames() {
+  const [names, err, reload] = useLoad(() => api<TaskName[]>('/task-names'));
+  const toast = useToast();
+  const confirm = useConfirm();
+  const [name, setName] = useState('');
+  const [fail, setFail] = useState<unknown>();
+  const run = async (fn: () => Promise<unknown>, ok: string) => {
+    setFail(undefined);
+    try { await fn(); toast(ok); } catch (e) { setFail(e); }
+    reload();
+  };
+  const add = () => run(() => api('/task-names', { body: { name: name.trim() } }).then(() => setName('')), `${name.trim()} added`);
+  const remove = async (t: TaskName) => {
+    if (await confirm({ title: `Remove ${t.name}?`, body: 'It will no longer be offered. Schedules and tasks already using it keep their name.', confirmLabel: 'Remove', danger: true })) {
+      run(() => api(`/task-names/${t.id}`, { method: 'DELETE' }), `${t.name} removed`);
+    }
+  };
+  return (
+    <Card title="Task names" description="Offered in a list when scheduling a task and when an employee adds their own task." padded={false} className="max-w-xl">
+      <ErrorText error={err || fail} />
+      <ul className="divide-y divide-line">
+        {names?.map((t) => (
+          <li key={t.id} className="flex items-center gap-2 px-5 py-2.5">
+            <span className="flex-1 text-sm font-semibold text-ink">{t.name}</span>
+            <button type="button" aria-label={`Remove ${t.name}`} onClick={() => remove(t)} className="grid place-items-center size-8 rounded-full text-slate-400 hover:bg-slate-100 hover:text-red-600"><Trash2 className="size-4" aria-hidden /></button>
+          </li>
+        ))}
+        {names && !names.length && <li className="px-5 py-3 text-sm text-slate-500">No task names yet. Add the first one below, for example GSTR-1 filing.</li>}
+      </ul>
+      <div className="p-4 border-t border-line flex gap-2">
+        <Input value={name} onChange={(e) => setName(e.target.value)} maxLength={80} placeholder="e.g. GSTR-3B filing" aria-label="New task name"
+          onKeyDown={(e) => { if (e.key === 'Enter' && name.trim().length >= 2) add(); }} />
+        <Button icon={Plus} disabled={name.trim().length < 2} onClick={add}>Add</Button>
+      </div>
+    </Card>
   );
 }

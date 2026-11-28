@@ -8,6 +8,7 @@ import {
   TakenError, createSchedule, endSchedule, listSchedules, rangeProblem, runOn, takeRun, takesFor, todayIst, type ScheduleDoc,
 } from '../firestore/schedules.ts';
 import { C } from '../firestore/types.ts';
+import { taskName } from './master.ts';
 
 /** Scheduled tasks: directors and managers set them up; the whole team sees them while on, and anyone may take one. */
 export const schedulesRouter = Router();
@@ -18,12 +19,12 @@ const planners = requireRole('director', 'manager');
 export async function scheduleRows() {
   const today = todayIst();
   const [rows, companies, users] = await Promise.all([listSchedules(), companyMap(), userNames()]);
-  const runs = rows.map((s) => ({ s, run: runOn(s, today) }));
+  const runs = rows.filter((s) => companies.has(s.company_id)).map((s) => ({ s, run: runOn(s, today) }));
   const taken = await takesFor(runs.map(({ s, run }) => `${s.id}_${run.start}`));
   return runs.map(({ s, run }) => {
     const t = taken.get(`${s.id}_${run.start}`);
     return {
-      id: s.id, company_id: s.company_id, company: companies.get(s.company_id)?.legal_name ?? '', repeat: s.repeat,
+      id: s.id, company_id: s.company_id, company: companies.get(s.company_id)?.legal_name ?? '', task: s.task ?? '', repeat: s.repeat,
       run, live: run.start <= today, created_by_name: users.get(s.created_by)?.name ?? '',
       taken: t ? { by: t.taken_by, name: users.get(t.taken_by)?.name ?? '', at: t.taken_at } : null,
     };
@@ -33,12 +34,13 @@ export async function scheduleRows() {
 schedulesRouter.get('/schedules', team, h(async (_req, res) => { res.json(await scheduleRows()); }));
 
 schedulesRouter.post('/schedules', planners, h(async (req, res) => {
-  const b = parse(z.object({ company_id: zId, start: zDate, end: zDate, repeat: z.enum(['monthly', 'yearly']) }), req.body);
+  const b = parse(z.object({ company_id: zId, task_name_id: z.string().max(100), start: zDate, end: zDate, repeat: z.enum(['monthly', 'yearly']) }), req.body);
   await assertCompany(req.user!, b.company_id); // a manager limited to some clients schedules only those
   const problem = rangeProblem(b.start, b.end, b.repeat);
   if (problem) throw new HttpError(400, problem);
-  const id = await createSchedule({ companyId: b.company_id, start: b.start, end: b.end, repeat: b.repeat, createdBy: req.user!.id });
-  await auditReq(req, { action: 'schedule.created', objectType: 'schedule', objectId: id, companyId: b.company_id, details: { start: b.start, end: b.end, repeat: b.repeat } });
+  const task = await taskName(b.task_name_id);
+  const id = await createSchedule({ companyId: b.company_id, task, start: b.start, end: b.end, repeat: b.repeat, createdBy: req.user!.id });
+  await auditReq(req, { action: 'schedule.created', objectType: 'schedule', objectId: id, companyId: b.company_id, details: { task, start: b.start, end: b.end, repeat: b.repeat } });
   res.status(201).json({ id });
 }));
 

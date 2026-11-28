@@ -33,7 +33,7 @@ const NAV: { group: string; items: NavItem[] }[] = [
     items: [
       { to: '/team', label: 'Team', icon: Users, roles: ['director', 'manager'] },
       { to: '/tally', label: 'Tally sync', icon: RefreshCcw, roles: ['director', 'manager'] },
-      { to: '/master', label: 'Masters', icon: Tags, roles: ['director'] },
+      { to: '/master', label: 'Masters', icon: Tags, roles: ['director', 'manager'] },
       { to: '/audit', label: 'Audit trail', icon: History, roles: ['director'] },
     ],
   },
@@ -76,8 +76,8 @@ function useBadgeCounts(enabled: boolean) {
   const { pathname } = useLocation();
   useEffect(() => {
     if (!enabled) return;
-    const load = () => api<{ toReview: number; accessRequests: number; clientRequests: number; scheduledNow: number }>('/dashboard')
-      .then((d) => setN({ review: d.toReview + d.accessRequests + d.clientRequests, schedules: d.scheduledNow })).catch(() => {});
+    const load = () => api<{ toReview: number; accessRequests: number; clientRequests: number; clientApprovals: number; scheduledNow: number }>('/dashboard')
+      .then((d) => setN({ review: d.toReview + d.accessRequests + d.clientRequests + d.clientApprovals, schedules: d.scheduledNow })).catch(() => {});
     load();
     window.addEventListener('schedules-changed', load);
     return () => window.removeEventListener('schedules-changed', load);

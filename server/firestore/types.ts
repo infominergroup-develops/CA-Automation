@@ -25,6 +25,8 @@ export const C = {
   designations: 'designations',
   schedules: 'schedules',
   scheduleTakes: 'schedule_takes',
+  taskNames: 'task_names',
+  deletedCompanies: 'deleted_companies',
 } as const;
 
 export type Role = 'director' | 'manager' | 'employee' | 'client';
@@ -33,6 +35,8 @@ export interface ClientGroupDoc { id: string; name: string; created_at: string; 
 
 /** Kinds of work the firm does for a client (GST, Audit, ...), which the director ticks per client. */
 export interface WorkTypeDoc { id: string; name: string; sort: number }
+/** Names of recurring work (GSTR-1, TDS return, ...) picked from a list when scheduling or adding one's own task. */
+export interface TaskNameDoc { id: string; name: string }
 /** Staff titles (Senior Accountant, Article Assistant, ...), set by the director. A label only: rights come from the role. */
 export interface DesignationDoc { id: string; name: string; created_at: string }
 
@@ -51,6 +55,9 @@ export interface CompanyDoc {
   created_by: string | null;
   /** Work type ids from the client master. */
   work_types?: string[];
+  /** Added by an employee: waits for its manager or a director. Files, tasks and the client's login stay closed until then. */
+  approval?: 'pending' | null;
+  approved_by?: string; approved_at?: string;
 }
 
 export interface UserDoc {
@@ -63,6 +70,8 @@ export interface UserDoc {
   password_hash?: string | null;
   status: 'active' | 'disabled';
   client_group_id: string | null;
+  /** A client login made with a client that waits for approval: kept off until the client is approved. */
+  awaiting_approval?: boolean | null;
   failed_logins: number;
   locked_until: string | null;
   monitoring_notice_ack_at: string | null;

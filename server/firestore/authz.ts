@@ -68,6 +68,8 @@ export async function inScope(u: SessionUser, companyId: string): Promise<boolea
 export async function assertCompany(u: SessionUser, companyId: string): Promise<CompanyDoc> {
   const c = (await inScope(u, companyId)) ? await getById<CompanyDoc>(C.companies, companyId) : undefined;
   if (!c) throw new HttpError(404, 'Not found.');
+  // Until approved, only the people who decide (its manager, directors) work on it.
+  if (c.approval === 'pending' && (u.role === 'employee' || u.role === 'client')) throw new HttpError(403, 'This client is waiting for approval by its manager or a director.', 'pending');
   return c;
 }
 

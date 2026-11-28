@@ -4,7 +4,7 @@ import { zId, zText } from '../shared.ts';
 import { db } from '../firestore/client.ts';
 import { HttpError, auditReq, h, parse, requireRole } from '../firestore/http.ts';
 import { FieldValue, newId, now, query } from '../firestore/store.ts';
-import { C, type ClientGroupDoc, type ClientSetDoc, type CompanyDoc, type DesignationDoc, type UserDoc, type WorkTypeDoc } from '../firestore/types.ts';
+import { C, type ClientGroupDoc, type ClientSetDoc, type CompanyDoc, type DesignationDoc, type TaskNameDoc, type UserDoc, type WorkTypeDoc } from '../firestore/types.ts';
 import { RIGHTS, ROLE_RIGHTS, rightsOf } from '../firestore/rights.ts';
 
 /** The client master: work types per client, named client groups given to staff, and clients ticked per employee. */
@@ -28,6 +28,38 @@ const ids = z.array(zId).max(5000).transform((a) => [...new Set(a)]);
 async function checkCompanies(companyIds: string[]) {
   const known = new Set((await query<CompanyDoc>(C.companies)).map((c) => c.id));
   if (!companyIds.every((id) => known.has(id))) throw new HttpError(400, 'Unknown client.');
+}
+
+/* ---------- Task names (directors and managers keep the list) ---------- */
+
+masterRouter.get('/task-names', requireRole('director', 'manager', 'employee'), h(async (_req, res) => {
+  res.json((await query<TaskNameDoc>(C.taskNames)).sort((a, b) => a.name.localeCompare(b.name)));
+}));
+
+masterRouter.post('/task-names', requireRole('director', 'manager'), h(async (req, res) => {
+  const { name } = parse(z.object({ name: zText(80).min(2) }), req.body);
+  const id = slug(name);
+  if (!id) throw new HttpError(400, 'Use letters or numbers in the name.');
+  const doc: TaskNameDoc = { id, name };
+  await db.collection(C.taskNames).doc(id).create(doc).catch((e) => { throw e?.code === 6 ? new HttpError(409, `There is already a task called ${name}.`) : e; });
+  await auditReq(req, { action: 'master.task_name_added', objectType: 'task_name', objectId: id, details: { name } });
+  res.status(201).json(doc);
+}));
+
+/** Schedules and tasks keep the name they were made with, so removing it here changes nothing already set up. */
+masterRouter.delete('/task-names/:id', requireRole('director', 'manager'), h(async (req, res) => {
+  const ref = db.collection(C.taskNames).doc(String(req.params.id));
+  if (!(await ref.get()).exists) throw new HttpError(404, 'Not found.');
+  await ref.delete();
+  await auditReq(req, { action: 'master.task_name_removed', objectType: 'task_name', objectId: ref.id });
+  res.json({ ok: true });
+}));
+
+/** The name of a task picked from the list, or 400. */
+export async function taskName(id: string): Promise<string> {
+  const t = (await db.collection(C.taskNames).doc(id).get()).data() as TaskNameDoc | undefined;
+  if (!t) throw new HttpError(400, 'Choose a task from the list.');
+  return t.name;
 }
 
 /* ---------- Work types ---------- */

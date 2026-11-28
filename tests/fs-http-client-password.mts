@@ -8,6 +8,7 @@ import type { AddressInfo } from 'node:net';
 import { createApp } from '../server/firestore/app.ts';
 import { db } from '../server/firestore/client.ts';
 import { C } from '../server/firestore/types.ts';
+import { getById } from '../server/firestore/store.ts';
 import { createStaffUser } from '../server/firestore/users.ts';
 import { addMonths, runOn, todayIst } from '../server/firestore/schedules.ts';
 import { ensureSettingDefaults } from '../server/firestore/settings.ts';
@@ -22,10 +23,10 @@ await ensureSettingDefaults();
 await ensureCategories();
 await (await import('../server/routes-fs/master.ts')).ensureWorkTypes();
 const PW = 'correct horse 99';
-await createStaffUser({ role: 'director', name: 'Krishna', email: 'k@firm.test', mobile: '9000000001', password: PW });
+const dirId = await createStaffUser({ role: 'director', name: 'Krishna', email: 'k@firm.test', mobile: '9000000001', password: PW });
 const mgrId = await createStaffUser({ role: 'manager', name: 'Ambrish', email: 'a@firm.test', mobile: '9000000002', password: PW });
 const empId = await createStaffUser({ role: 'employee', name: 'Deepak', email: 'd@firm.test', mobile: '9000000003', password: PW });
-await createStaffUser({ role: 'employee', name: 'Vivek', email: 'v@firm.test', mobile: '9000000004', password: PW });
+const emp2Id = await createStaffUser({ role: 'employee', name: 'Vivek', email: 'v@firm.test', mobile: '9000000004', password: PW });
 
 const server = createApp().listen(0);
 await new Promise((r) => server.once('listening', r));
@@ -120,6 +121,20 @@ try {
   check('employee sees only the client they added', (await emp.get('/api/companies')).data.map((c: any) => c.legal_name).join() === 'Gupta Textiles');
   check('another employee does not see it', (await emp2.get('/api/companies')).data.length === 0 && (await emp2.post(G, file('x.pdf', 'others', 'x'))).status === 404);
   check('the chosen manager sees it', (await mgr.get('/api/companies')).data.some((c: any) => c.id === gupta));
+  // An employee's new client waits for its manager or a director.
+  check('an employee\'s new client waits for approval', made.data.pending === true && (await mgr.get('/api/companies')).data.find((c: any) => c.id === gupta)?.approval === 'pending');
+  check('...its files stay closed to the employee meanwhile', (await emp.post(G, file('early.pdf', 'others', 'x'))).status === 403);
+  const guptaLogin = async () => (await getById<any>(C.users, made.data.userId))?.status;
+  check('...and its login stays off', (await guptaLogin()) === 'disabled');
+  check('the manager is told', (await mgr.get('/api/dashboard')).data.clientApprovals === 1);
+  check('an employee cannot approve it', (await emp.post(`/api/companies/${gupta}/approval`, { decision: 'approve' })).status === 403);
+  check('its manager approves it', (await mgr.post(`/api/companies/${gupta}/approval`, { decision: 'approve' })).status === 200);
+  check('...only once', (await mgr.post(`/api/companies/${gupta}/approval`, { decision: 'approve' })).status === 409);
+  check('then its login is on', (await guptaLogin()) === 'active');
+  // A client is added once: same name or same GST number is refused.
+  check('the same name is refused', await (async () => { const r = await dir.post('/api/clients', { group_name: 'Other', company: { legal_name: ' gupta TEXTILES ' } }); return r.status === 409 && /already exists: Gupta Textiles/.test(r.data.error); })());
+  await dir.post('/api/clients', { group_name: 'GST Co', company: { legal_name: 'GST Co One', gstin: '27AAPFU0939F1ZV' } });
+  check('the same GST number is refused', await (async () => { const r = await dir.post('/api/clients', { group_name: 'GST Two', company: { legal_name: 'GST Co Two', gstin: '27aapfu0939f1zv' } }); return r.status === 409 && /GST number already exists: GST Co One/.test(r.data.error); })());
   const mine = await emp.post(G, file('P&L.pdf', 'profit-and-loss', 'mine'));
   check('employee uploads to it', mine.status === 201, mine.data);
   const theirs = await dir.post(G, file('Bank.pdf', 'bank-statements', 'director'));
@@ -352,20 +367,29 @@ try {
   await retail.post('/api/privacy/consent', { purposes: ['service'], version: (await retail.get('/api/privacy/notice')).data.version });
   check('...and sees only their own client', ((await retail.get('/api/companies')).data as any[]).map((c) => c.legal_name).join() === 'Mehta Retail LLP');
   check('a taken username is refused', (await dir.post(`/api/clients/${shared.data.groupId}/users`, { name: 'Ravi 2', mobile: '9876543210', email: 'ravi@mehta.test', password: 'retail pass 2026', username: 'ravi.retail' })).status === 409);
+  // --- Task names: directors and managers keep the list
+  check('an employee cannot add a task name', (await emp2.post('/api/task-names', { name: 'GSTR-1 filing' })).status === 403);
+  const gstr1 = await mgr.post('/api/task-names', { name: 'GSTR-1 filing' });
+  check('a manager adds a task name', gstr1.status === 201 && gstr1.data.id === 'gstr-1-filing', gstr1.data);
+  check('...once', (await dir.post('/api/task-names', { name: 'gstr 1 filing' })).status === 409);
+  check('the team sees the list', ((await emp2.get('/api/task-names')).data as any[]).map((t) => t.name).join() === 'GSTR-1 filing');
+  const T = gstr1.data.id;
+
   // --- Scheduled tasks: directors and managers set them; the whole team sees them while on; anyone may take one
   const day = (n: number) => new Date(Date.parse(todayIst()) + n * 864e5).toISOString().slice(0, 10); // n days from today in India
   check('dates: the 31st becomes the end of a short month', addMonths('2026-01-31', 1) === '2026-02-28' && addMonths('2024-01-31', 1) === '2024-02-29');
   check('dates: the run covering a day, or the next one', JSON.stringify(runOn({ start: '2026-01-01', end: '2026-01-10', repeat: 'monthly' }, '2026-03-05')) === '{"start":"2026-03-01","end":"2026-03-10"}'
     && runOn({ start: '2026-01-01', end: '2026-01-10', repeat: 'monthly' }, '2026-03-15').start === '2026-04-01'
     && runOn({ start: '2025-07-01', end: '2025-07-31', repeat: 'yearly' }, '2026-08-01').start === '2027-07-01');
-  check('employee cannot schedule', (await emp2.post('/api/schedules', { company_id: companyId, start: day(-1), end: day(2), repeat: 'monthly' })).status === 403);
-  check('end before start refused', (await dir.post('/api/schedules', { company_id: companyId, start: day(2), end: day(1), repeat: 'monthly' })).status === 400);
-  check('a monthly one must be shorter than a month', (await dir.post('/api/schedules', { company_id: companyId, start: day(0), end: day(40), repeat: 'monthly' })).status === 400);
-  const onNow = await dir.post('/api/schedules', { company_id: companyId, start: day(-1), end: day(2), repeat: 'monthly' });
-  const later = await mgr.post('/api/schedules', { company_id: companyId, start: day(20), end: day(25), repeat: 'yearly' });
+  check('employee cannot schedule', (await emp2.post('/api/schedules', { company_id: companyId, start: day(-1), end: day(2), task_name_id: T, repeat: 'monthly' })).status === 403);
+  check('end before start refused', (await dir.post('/api/schedules', { company_id: companyId, start: day(2), end: day(1), task_name_id: T, repeat: 'monthly' })).status === 400);
+  check('a monthly one must be shorter than a month', (await dir.post('/api/schedules', { company_id: companyId, start: day(0), end: day(40), task_name_id: T, repeat: 'monthly' })).status === 400);
+  check('a schedule needs a task from the list', (await dir.post('/api/schedules', { company_id: companyId, start: day(-1), end: day(2), task_name_id: 'nope', repeat: 'monthly' })).status === 400);
+  const onNow = await dir.post('/api/schedules', { company_id: companyId, start: day(-1), end: day(2), task_name_id: T, repeat: 'monthly' });
+  const later = await mgr.post('/api/schedules', { company_id: companyId, start: day(20), end: day(25), task_name_id: T, repeat: 'yearly' });
   check('director and manager schedule tasks', onNow.status === 201 && later.status === 201, [onNow.data, later.data]);
   const listed = (await emp2.get("/api/schedules")).data as any[];
-  check("the whole team sees them, on now first", listed.length === 2 && listed[0].id === onNow.data.id && listed[0].live && !listed[1].live && listed[0].company === "Mehta Traders Pvt Ltd", listed);
+  check("the whole team sees them, on now first", listed.length === 2 && listed[0].id === onNow.data.id && listed[0].task === 'GSTR-1 filing' && listed[0].live && !listed[1].live && listed[0].company === "Mehta Traders Pvt Ltd", listed);
   check('the team is told about the one on now', (await emp2.get('/api/dashboard')).data.scheduledNow === 1);
   check('anyone takes it', (await emp.post(`/api/schedules/${onNow.data.id}/take`, {})).status === 200);
   check('...only once', (await mgr.post(`/api/schedules/${onNow.data.id}/take`, {})).status === 409);
@@ -379,14 +403,46 @@ try {
   const kapoor = (await dir.post('/api/clients', { group_name: 'Kapoor Metals', company: { legal_name: 'Kapoor Metals' } })).data.companyId;
   const KD = `/api/companies/${kapoor}/documents`;
   check('before taking, the employee cannot open that client', (await emp2.get(KD)).status === 404);
-  const kapoorRun = await dir.post('/api/schedules', { company_id: kapoor, start: day(0), end: day(3), repeat: 'monthly' });
+  const kapoorRun = await dir.post('/api/schedules', { company_id: kapoor, start: day(0), end: day(3), task_name_id: T, repeat: 'monthly' });
   check('...not even while it is on', (await emp2.get(KD)).status === 404);
   await emp2.post(`/api/schedules/${kapoorRun.data.id}/take`, {});
   check('after taking it, the employee opens the client and its files', (await emp2.get(KD)).status === 200 && ((await emp2.get('/api/companies')).data as any[]).some((c) => c.id === kapoor));
   check('nobody else gains access by it', (await browser().get(KD)).status !== 200);
   await dir.del(`/api/schedules/${kapoorRun.data.id}`);
   check('once the schedule is stopped, access ends', (await emp2.get(KD)).status === 404);
-  check('scheduling and taking are audited', (await dir.get('/api/audit?action=schedule.')).data.length === 8);
+  // --- An employee adds their own task; whoever gave it approves it
+  const kapoorOwn = (await emp2.post('/api/clients', { group_name: 'Kapoor Own Co', company: { legal_name: 'Kapoor Own Co', manager_id: mgrId } })).data.companyId;
+  await mgr.post(`/api/companies/${kapoorOwn}/approval`, { decision: 'approve' });
+  check('own task: needs a task from the list', (await emp2.post('/api/tasks/own', { company_id: kapoorOwn, task_name_id: 'nope', reviewer_id: mgrId })).status === 400);
+  check('own task: only for a client they work on', (await emp2.post('/api/tasks/own', { company_id: companyId, task_name_id: T, reviewer_id: mgrId })).status === 404);
+  check('own task: approved by a manager or director, not themselves', (await emp2.post('/api/tasks/own', { company_id: kapoorOwn, task_name_id: T, reviewer_id: emp2Id })).status === 400);
+  const own = await emp2.post('/api/tasks/own', { company_id: kapoorOwn, task_name_id: T, reviewer_id: mgrId });
+  check('an employee adds their own task', own.status === 201, own.data);
+  const ownRow = ((await emp2.get('/api/tasks?view=mine')).data as any[]).find((t) => t.id === own.data.id);
+  check('...assigned to them, named from the list, approved by whoever gave it', ownRow?.title === 'GSTR-1 filing' && ownRow?.assignee_id === emp2Id && ownRow?.reviewer_id === mgrId, ownRow);
+  check('managers cannot use it to make tasks for others', (await mgr.post('/api/tasks/own', { company_id: kapoorOwn, task_name_id: T, reviewer_id: dirId })).status === 403);
+  await emp2.post(`/api/tasks/${own.data.id}/start`);
+  check('they finish and submit it', (await emp2.post(`/api/tasks/${own.data.id}/submit`, { note: 'Filed' })).status === 200);
+  check('they cannot approve it themselves', (await emp2.post(`/api/tasks/${own.data.id}/approve`, {})).status === 403);
+  check('whoever gave it approves it', (await mgr.post(`/api/tasks/${own.data.id}/approve`, {})).status === 200);
+
+  // --- Turning down and deleting clients
+  const quick = await emp2.post('/api/clients', { group_name: 'Quick Co', company: { legal_name: 'Quick Co', manager_id: mgrId } });
+  check('a director turns down a new client: it is removed', (await dir.post(`/api/companies/${quick.data.companyId}/approval`, { decision: 'reject' })).status === 200
+    && (await dir.get(`/api/companies/${quick.data.companyId}`)).status === 404);
+  check('only a director deletes a client', (await mgr.del(`/api/companies/${kapoorOwn}`)).status === 403);
+  const leftover = await dir.post('/api/schedules', { company_id: kapoorOwn, start: day(0), end: day(3), task_name_id: T, repeat: 'monthly' });
+  const openTask = await dir.post('/api/tasks', { company_id: kapoorOwn, type: 'Other', title: 'Open work', assignee_id: emp2Id, reviewer_id: mgrId });
+  check('director deletes a client', (await dir.del(`/api/companies/${kapoorOwn}`)).status === 200);
+  check('...it is gone from the lists and its page', !((await dir.get('/api/companies')).data as any[]).some((c) => c.id === kapoorOwn) && (await dir.get(`/api/companies/${kapoorOwn}`)).status === 404);
+  check('...its files are out of reach', (await dir.get(`/api/companies/${kapoorOwn}/documents`)).status === 404);
+  check('...its open tasks are cancelled and leave the lists', (await getById<any>(C.tasks, openTask.data.id))?.status === 'cancelled' && !((await dir.get('/api/tasks')).data as any[]).some((t) => t.id === openTask.data.id));
+  check('...its schedules stop', !((await dir.get('/api/schedules')).data as any[]).some((r) => r.id === leftover.data.id));
+  check('...and the record is kept aside', (await getById<any>(C.deletedCompanies, kapoorOwn))?.deleted_reason === 'deleted');
+  check('a deleted client can be added again', (await dir.post('/api/clients', { group_name: 'Kapoor Again', company: { legal_name: 'Kapoor Own Co' } })).status === 201);
+  check('clients: approving, turning down and deleting are audited', (await dir.get('/api/audit?action=client.')).data.filter((a: any) => ['client.approved', 'client.rejected', 'client.deleted'].includes(a.action)).map((a: any) => a.action).sort().join() === 'client.approved,client.approved,client.deleted,client.rejected');
+
+  check('scheduling and taking are audited', ((await dir.get('/api/audit?action=schedule.')).data as any[]).map((a) => a.action).sort().join() === 'schedule.created,schedule.created,schedule.created,schedule.created,schedule.ended,schedule.ended,schedule.taken,schedule.taken,schedule.taken', (await dir.get('/api/audit?action=schedule.')).data.map((a: any) => a.action));
 
   check('role and rights changes are audited', (await dir.get('/api/audit?action=user.role_changed')).data.length === 1 && (await dir.get('/api/audit?action=user.rights_set')).data.length >= 6);
 } catch (e) {

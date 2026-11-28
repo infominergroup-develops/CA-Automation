@@ -1,20 +1,23 @@
 import { useState } from 'react';
-import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { Building2, ChevronRight, ClipboardList, Plus, Search, Send, UserPlus, Users } from 'lucide-react';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { Building2, ChevronRight, ClipboardList, Plus, Search, Send, Trash2, UserPlus, Users } from 'lucide-react';
 import { api, fmtDate } from '../api';
 import { useClientPassword, useHasClientMaster, useHasTally, useUser } from '../auth';
 import { DocumentsPanel } from '../components/DocumentsPanel';
 import { ReportsPanel } from './Reports';
 import {
-  Badge, Button, Card, Chip, EmptyState, ErrorText, Field, Input, LoadingRows, Modal, PageHeader, Select, StatusBadge, Table, Tabs, Td, Textarea,
-  useLoad, useToast,
+  Alert, Badge, Button, Card, Chip, EmptyState, ErrorText, Field, Input, LoadingRows, Modal, PageHeader, Select, StatusBadge, Table, Tabs, Td, Textarea,
+  useConfirm, useLoad, useToast,
 } from '../components/ui';
 import { TaskForm, TaskTable, type TaskRow } from './Tasks';
 
 interface Company {
   id: string; legal_name: string; pan: string | null; gstin: string | null; tally_name: string | null; group_id: string;
   group_name: string; manager_name: string | null; pending_docs: number; open_tasks: number; work_types?: string[];
+  manager_id?: string | null; approval?: 'pending' | null;
 }
+
+const Waiting = () => <Badge tone="amber" dot>Waiting for approval</Badge>;
 export interface StaffUser { id: string; role: string; name: string; email: string; mobile: string; status: string; designation?: string | null; username?: string | null }
 
 /** The client group, only when it is not just the company's own name again (it defaults to that). */
@@ -63,6 +66,7 @@ export function Clients() {
                   <tr key={c.id} className="hover:bg-slate-50/70 transition-colors">
                     <Td>
                       <Link to={`/company/${c.id}`} className="font-semibold text-ink hover:text-brand-700">{c.legal_name}</Link>
+                      {c.approval === 'pending' && <div className="mt-1"><Waiting /></div>}
                       {groupIfOther(c) && <div className="text-xs text-slate-500">Group · {groupIfOther(c)}</div>}
                       {!!c.work_types?.length && <div className="flex flex-wrap gap-1 mt-1">{c.work_types.map((w) => <Badge key={w} tone="slate">{workName(w)}</Badge>)}</div>}
                     </Td>
@@ -85,6 +89,7 @@ export function Clients() {
                   <Link to={`/company/${c.id}`} className="flex items-center gap-3 px-5 py-3.5">
                     <span className="min-w-0 flex-1">
                       <span className="block font-semibold text-ink truncate">{c.legal_name}</span>
+                      {c.approval === 'pending' && <span className="block mt-1"><Waiting /></span>}
                       <span className="block text-xs text-slate-500">{employee ? groupIfOther(c) : `${c.open_tasks} open tasks · ${c.manager_name ?? 'Unassigned'}`}</span>
                     </span>
                     {!!c.pending_docs && <Badge tone="amber" dot>{c.pending_docs}</Badge>}
@@ -119,7 +124,7 @@ function NewClient({ onClose, onDone }: { onClose: () => void; onDone: () => voi
   const save = async () => {
     setBusy(true); setErr(undefined);
     try {
-      const made = await api<{ username: string | null }>('/clients', {
+      const made = await api<{ username: string | null; pending: boolean }>('/clients', {
         body: {
           group_name: f.group_name || f.legal_name,
           company: { legal_name: f.legal_name, pan: f.pan, gstin: f.gstin, tally_name: f.tally_name || undefined, manager_id: f.manager_id || undefined },
@@ -127,8 +132,9 @@ function NewClient({ onClose, onDone }: { onClose: () => void; onDone: () => voi
           ...(work.length && { work_types: work }),
         },
       });
-      toast(withLogin ? `${f.legal_name} added. ${f.name} signs in with the username ${made.username}${clientPassword ? ' and the password you set' : ''}.`
-        : `${f.legal_name} added without a portal login. You can add one later under Client logins.`);
+      toast(made.pending ? `${f.legal_name} added. It opens once its manager or a director approves it${withLogin ? `; then ${f.name} can sign in with the username ${made.username}` : ''}.`
+        : withLogin ? `${f.legal_name} added. ${f.name} signs in with the username ${made.username}${clientPassword ? ' and the password you set' : ''}.`
+          : `${f.legal_name} added without a portal login. You can add one later under Client logins.`);
       onDone();
     } catch (e) { setErr(e); } finally { setBusy(false); }
   };
@@ -205,6 +211,26 @@ function StaffCompany() {
   const [settingPassword, setSettingPassword] = useState<{ id: string; name: string } | null>(null);
   const clientPassword = useClientPassword();
   const c = data?.company;
+  const nav = useNavigate();
+  const confirm = useConfirm();
+  const toast = useToast();
+  const canDecide = !!c && (u.role === 'director' || (u.role === 'manager' && c.manager_id === u.id));
+  const decide = async (decision: 'approve' | 'reject') => {
+    if (decision === 'reject' && !(await confirm({ title: `Turn down ${c!.legal_name}?`, body: 'The client is removed, with any login made for it.', confirmLabel: 'Turn down', danger: true }))) return;
+    try {
+      await api(`/companies/${id}/approval`, { body: { decision } });
+      toast(decision === 'approve' ? `${c!.legal_name} approved` : `${c!.legal_name} turned down`);
+      if (decision === 'approve') reload(); else nav('/clients');
+    } catch (e) { toast((e as Error).message, 'error'); }
+  };
+  const remove = async () => {
+    if (!(await confirm({ title: `Delete ${c!.legal_name}?`, body: 'The client leaves the portal: its open tasks are cancelled, its schedules stop, and its login stops if it has no other company. Its files are kept, encrypted and out of reach, for the legal retention period.', confirmLabel: 'Delete client', danger: true }))) return;
+    try {
+      await api(`/companies/${id}`, { method: 'DELETE' });
+      toast(`${c!.legal_name} deleted`);
+      nav('/clients');
+    } catch (e) { toast((e as Error).message, 'error'); }
+  };
   if (err) return <ErrorText error={err} />;
   if (!c) return <LoadingRows rows={6} />;
   return (
@@ -219,7 +245,23 @@ function StaffCompany() {
             {c.manager_name && <Badge tone="brand">Manager · {c.manager_name}</Badge>}
           </span>
         }
-        actions={managerial && <Button icon={Plus} onClick={() => setNewTask(true)}>New task</Button>} />
+        actions={managerial && (
+          <>
+            {u.role === 'director' && <Button variant="secondary" icon={Trash2} onClick={remove}>Delete client</Button>}
+            <Button icon={Plus} onClick={() => setNewTask(true)}>New task</Button>
+          </>
+        )} />
+      {c.approval === 'pending' && (
+        <Alert tone="warning" title="Waiting for approval">
+          {canDecide ? (
+            <span className="flex flex-wrap items-center gap-3 mt-1">
+              An employee added this client. Its files, tasks and login open once you approve it.
+              <Button size="sm" onClick={() => decide('approve')}>Approve</Button>
+              <Button size="sm" variant="secondary" onClick={() => decide('reject')}>Turn down</Button>
+            </span>
+          ) : 'Its manager or a director needs to approve it. Until then its files and tasks stay closed.'}
+        </Alert>
+      )}
       <Tabs value={tab} onChange={setTab} items={[
         { value: 'docs', label: 'Documents' },
         ...(hasTally ? [{ value: 'reports' as const, label: 'Reports' }] : []),
